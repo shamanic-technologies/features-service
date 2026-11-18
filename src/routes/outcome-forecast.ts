@@ -21,6 +21,27 @@ import { readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-i
 import { FLEET_SCOPE_ID, SILVER_RULE, type TransitionStat } from "../lib/outcome-silver.js";
 import { campaignForecastOf, FORECAST_RULE } from "../lib/outcome-forecast.js";
 
+/**
+ * FORECAST-NO-TARGET-YET-1118. What a milestone with no count means FOR THE FORECAST, one rule for every outcome:
+ *  - `no_unit_makes_it`: the ledger is readable, a producer declares this outcome somewhere, it saw none on this campaign
+ *    and the campaign spent on no unit making it (a step the client's own team makes, a campaign too young). Nothing is
+ *    unknown: the count is ZERO, and the milestone is projected by the same ladder as any other.
+ *  - `ledger_unreadable`: we could not read the ledger now: a zero would be a guess. Refused (it clears by itself).
+ *  - `outcome_not_declared_in_ledger`: the brand's runs CONSUMED this outcome and no run declared producing it: Units
+ *    exist that the ledger cannot count. Refused: zero would be false.
+ *  - `no_producer_declares_outcome`: no run of the fleet ever declared this outcome: nothing could ever be counted or
+ *    measured for it. Refused.
+ *  - any other reason: refused (unknown = never read as zero).
+ */
+export const FORECAST_ZERO_COUNT_REASONS: ReadonlySet<string> = new Set(["no_unit_makes_it"]);
+export const forecastCountsAsZero = (reason: string | null): boolean => reason !== null && FORECAST_ZERO_COUNT_REASONS.has(reason);
+/** The reasons a Target the ledger cannot count refuses the forecast under (the closed list the page words). */
+export const TARGET_REFUSAL_REASONS = ["target_ledger_unreadable", "target_outcome_not_declared_in_ledger", "target_no_producer_declares_outcome", "target_not_counted_in_ledger"] as const;
+export function targetRefusalOf(reason: string | null): (typeof TARGET_REFUSAL_REASONS)[number] {
+  const named = `target_${reason ?? ""}`;
+  return (TARGET_REFUSAL_REASONS as readonly string[]).includes(named) ? (named as (typeof TARGET_REFUSAL_REASONS)[number]) : "target_not_counted_in_ledger";
+}
+
 const router = Router();
 const PATH = "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/outcome-forecast";
 const TTL_MS = 10 * 60_000;
@@ -37,26 +58,54 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
   const stats = new Map<string, TransitionStat>();
   for (const r of [...campaign, ...brand, ...fleet]) if (r.body.kind === "transition") stats.set(`${r.scope}\u0000${r.fromKey}\u0000${r.toKey}`, r.body.stat);
   const needed = new Map(basis.milestoneBasis.map((m) => [m.step, m]));
-  // The Target's own card must be counted by the ledger: with no count there is nothing to project to.
-  const targetCounted = basis.row.milestones.some((m) => m.isTarget && m.count !== null);
-  const body = campaignForecastOf({
-    now,
-    salesFunnelCampaignId: row.id,
-    hasTarget: basis.row.target !== null && targetCounted,
-    // A milestone the ledger cannot count holds no Units to project from: the chain keeps the counted ones.
-    milestones: basis.row.milestones
-      .filter((m) => m.count !== null)
-      .map((m) => ({ step: m.step, label: m.label, ledgerKeys: needed.get(m.step)?.ledgerKeys ?? [], unitsByDay: m.past.filter((p) => p.outcomes !== 0).map((p) => ({ date: p.date, units: p.outcomes })), neededPerTarget: needed.get(m.step)?.neededPerTarget ?? null })),
-    spendByDay: basis.input.spendByDay,
-    capacity: basis.input.capacity,
-    spendPerDayUsd: basis.row.projection.spendPerDayUsd,
-    spendPerDaySource: basis.row.projection.spendPerDaySource,
-    plan: { costPerTargetUsd: basis.row.projection.costPerTargetUsd, basis: basis.row.projection.costPerTargetBasis },
-    targetValueUsd: basis.input.targetValueUsd,
-    transition: (scope, a, b) => stats.get(`${scope}\u0000${a}\u0000${b}`) ?? null,
-    silverComputedAt,
-  });
-  return { brandId, name: row.salesFunnelName, target: basis.row.target, pricing, costBasis: "charged" as const, uncountedMilestones: basis.row.milestones.filter((m) => m.count === null).map((m) => ({ step: m.step, label: m.label, reason: m.countUnavailableReason })), ...body, unavailableReason: basis.row.target !== null && !targetCounted ? "target_not_counted_in_ledger" : body.unavailableReason };
+  // FORECAST-NO-TARGET-YET-1118: a milestone the ledger simply has not SEEN yet holds ZERO Units and is projected like
+  // any other (a young campaign with no Target yet is exactly what a forecast is for). Only a milestone the ledger
+  // CANNOT count is left out, and a Target it cannot count refuses the forecast under its own reason.
+  const projected = (m: { count: number | null; countUnavailableReason: string | null }) => m.count !== null || forecastCountsAsZero(m.countUnavailableReason);
+  const target = basis.row.milestones.find((m) => m.isTarget) ?? null;
+  const targetCounted = target !== null && projected(target);
+  const forecastOver = (chain: typeof basis.row.milestones) =>
+    campaignForecastOf({
+      now,
+      salesFunnelCampaignId: row.id,
+      hasTarget: basis.row.target !== null && targetCounted,
+      milestones: chain.map((m) => ({ step: m.step, label: m.label, ledgerKeys: needed.get(m.step)?.ledgerKeys ?? [], unitsByDay: m.past.filter((p) => p.outcomes !== 0).map((p) => ({ date: p.date, units: p.outcomes })), neededPerTarget: needed.get(m.step)?.neededPerTarget ?? null })),
+      spendByDay: basis.input.spendByDay,
+      capacity: basis.input.capacity,
+      spendPerDayUsd: basis.row.projection.spendPerDayUsd,
+      spendPerDaySource: basis.row.projection.spendPerDaySource,
+      plan: { costPerTargetUsd: basis.row.projection.costPerTargetUsd, basis: basis.row.projection.costPerTargetBasis },
+      targetValueUsd: basis.input.targetValueUsd,
+      transition: (scope, x, y) => stats.get(`${scope}\u0000${x}\u0000${y}`) ?? null,
+      silverComputedAt,
+    });
+  // A milestone the ledger cannot count holds no Units to project from: the chain keeps the others.
+  let chain = basis.row.milestones.filter(projected);
+  let body = forecastOver(chain);
+  // A zero milestone in the MIDDLE with no rate measured or planned to or from it would refuse a forecast its neighbours
+  // can carry: the chain then goes on without it (as it did before it was kept), and it is listed as left out.
+  if (body.unavailableReason?.startsWith("yield_unmeasured:")) {
+    const without = basis.row.milestones.filter((m) => m.count !== null || (m.isTarget && projected(m)));
+    if (without.length < chain.length) {
+      const retry = forecastOver(without);
+      if (retry.unavailableReason === null) {
+        chain = without;
+        body = retry;
+      }
+    }
+  }
+  const inChain = new Set(chain.map((m) => m.step));
+  return {
+    brandId,
+    name: row.salesFunnelName,
+    target: basis.row.target,
+    pricing,
+    costBasis: "charged" as const,
+    // The milestones left OUT of the projection (the ledger cannot count them), each with why.
+    uncountedMilestones: basis.row.milestones.filter((m) => !inChain.has(m.step)).map((m) => ({ step: m.step, label: m.label, reason: m.countUnavailableReason })),
+    ...body,
+    unavailableReason: basis.row.target !== null && !targetCounted ? targetRefusalOf(target?.countUnavailableReason ?? null) : body.unavailableReason,
+  };
 }
 
 router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/outcome-forecast", apiKeyAuth, async (req, res) => {
@@ -72,7 +121,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/outco
     const sweep = await readCurrentSilverSweep();
     const body = await servedCached({
       view: "campaign-outcome-forecast",
-      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, gold: FORECAST_RULE, units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
+      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, gold: FORECAST_RULE, zero: "not-seen-yet", units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
       orgId: auth.orgId,
       ttlMs: TTL_MS,
       responseShape: routeResponseShapeFingerprint(PATH),
