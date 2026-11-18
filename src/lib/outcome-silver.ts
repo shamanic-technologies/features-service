@@ -358,11 +358,30 @@ export interface SilverStatRow {
   fromKey: string;
   toKey: string;
   sampleSize: number;
-  body: { kind: "unit_cost"; stat: UnitCostStat } | { kind: "transition"; stat: TransitionStat };
+  body: { kind: "unit_cost"; stat: UnitCostStat } | { kind: "transition"; stat: TransitionStat } | { kind: "entry_cost"; stat: EntryCostStat };
 }
 
+/**
+ * FORECAST-ENTRY-COST-BASIS-1118. What sales funnel campaigns spend, ALL IN, to get one Unit of their FIRST milestone:
+ * everything the ledger states on every Unit a campaign carries (its whole production spend, net) ÷ its Units of that
+ * first milestone. A campaign's first milestone = the outcome it makes that stands lowest on the lifecycle ladder (the
+ * outcome rung catalogue; an outcome on no rung is never one: a campaign making none has no row). One row per campaign,
+ * and pooled (Σ spend ÷ Σ Units) per brand and for the fleet, keyed on that outcome. Never the ledger cost of the Unit
+ * alone (`unit_cost`): a message costs $0.001 to send and $0.075 all in.
+ */
+export interface EntryCostStat {
+  /** Sales funnel campaigns pooled. */
+  campaigns: number;
+  /** Their Units of the first milestone. */
+  units: number;
+  /** Everything they spent (the ledger's stated cost of every Unit they carry), net, USD. */
+  spendUsd: number;
+}
+/** `from_key` of an entry-cost row (`to_key` = the first-milestone outcome). */
+export const ENTRY_COST_FROM_KEY = "@entry";
+
 /** Bump when a rule here changes what the stored stats mean: the next tick sweeps again instead of waiting a day. */
-export const SILVER_RULE = "2026-11-17.6-foreign-sources";
+export const SILVER_RULE = "2026-11-18.1-entry-cost";
 
 /** A delay sample under this is THIN: the next scope's curve is preferred (and the choice is said). */
 export const MIN_DELAY_PAIRS = 10;
@@ -379,6 +398,8 @@ export function buildSilverStats(input: {
   pairBins: readonly PairBinRow[];
   linkedTo: readonly LinkedToRow[];
   funnelOf: (unitCampaignId: string) => string | null;
+  /** An outcome's rank on the lifecycle ladder (1 = lowest); null = on no rung. Absent = no entry-cost row is built. */
+  rankOf?: (outcomeKey: string) => number | null;
   today: string;
 }): SilverStatRow[] {
   const { funnelOf, today } = input;
@@ -408,6 +429,44 @@ export function buildSilverStats(input: {
     const [scope, scopeId, outcomeKey] = k.split("\u0000") as [SilverScope, string, string];
     const d = distributionOf(c.pts, c.net / 100);
     if (d) rows.push({ scope, scopeId, fromKey: "", toKey: outcomeKey, sampleSize: d.n, body: { kind: "unit_cost", stat: { units: d.n, costUsd: d, meanGrossCostUsd: c.gross / 100 / d.n } } });
+  }
+
+  // 1b. The all-in cost of one first-milestone Unit, per sales funnel campaign, pooled per brand and for the fleet.
+  if (input.rankOf) {
+    const rankOf = input.rankOf;
+    const spendOf = new Map<string, number>();
+    for (const r of input.unitCosts) for (const f of funnels(r.campaignIds)) spendOf.set(f, (spendOf.get(f) ?? 0) + r.sumNetCents / 100);
+    const unitsOf = new Map<string, Map<string, number>>();
+    for (const r of input.unitDays)
+      for (const f of funnels(r.campaignIds)) {
+        const m = unitsOf.get(f) ?? unitsOf.set(f, new Map()).get(f)!;
+        m.set(r.outcomeKey, (m.get(r.outcomeKey) ?? 0) + r.units);
+      }
+    const pools = new Map<string, EntryCostStat>();
+    const add = (scope: SilverScope, scopeId: string, outcomeKey: string, units: number, spendUsd: number) => {
+      const k = `${scope}\u0000${scopeId}\u0000${outcomeKey}`;
+      const p = pools.get(k) ?? pools.set(k, { campaigns: 0, units: 0, spendUsd: 0 }).get(k)!;
+      p.campaigns += 1;
+      p.units += units;
+      p.spendUsd += spendUsd;
+    };
+    for (const [f, spendUsd] of spendOf) {
+      if (spendUsd <= 0) continue;
+      const first = [...(unitsOf.get(f) ?? [])]
+        .filter(([, n]) => n > 0)
+        .map(([key, n]) => ({ key, n, rank: rankOf(key) }))
+        .filter((o): o is { key: string; n: number; rank: number } => o.rank !== null)
+        .sort((x, y) => x.rank - y.rank || y.n - x.n || x.key.localeCompare(y.key))[0];
+      if (!first) continue;
+      add("campaign", f, first.key, first.n, spendUsd);
+      const brandId = brandOfFunnel.get(f);
+      if (brandId !== undefined) add("brand", brandId, first.key, first.n, spendUsd);
+      add("fleet", FLEET_SCOPE_ID, first.key, first.n, spendUsd);
+    }
+    for (const [k, stat] of pools) {
+      const [scope, scopeId, outcomeKey] = k.split("\u0000") as [SilverScope, string, string];
+      rows.push({ scope, scopeId, fromKey: ENTRY_COST_FROM_KEY, toKey: outcomeKey, sampleSize: stat.units, body: { kind: "entry_cost", stat } });
+    }
   }
 
   // 2. Units per scope, outcome and day: the basis of every yield, both sides. A yield is counted inside SALES FUNNEL

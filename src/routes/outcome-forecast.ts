@@ -18,7 +18,7 @@ import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { campaignTargetBasis } from "./campaign-targets.js";
 import { readCampaignPairBins, readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-io.js";
-import { delayDistributionOf, FLEET_SCOPE_ID, SILVER_RULE, type DelayDistribution, type TransitionStat } from "../lib/outcome-silver.js";
+import { delayDistributionOf, FLEET_SCOPE_ID, SILVER_RULE, type DelayDistribution, type EntryCostStat, type TransitionStat } from "../lib/outcome-silver.js";
 import { campaignForecastOf, FORECAST_RULE } from "../lib/outcome-forecast.js";
 
 /**
@@ -53,11 +53,11 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
     silverComputedAt === null ? [] : readSilverStats("fleet", FLEET_SCOPE_ID),
   ]);
   const stats = new Map<string, TransitionStat>();
-  // The measured cost of one Unit per outcome (the ledger's stated production cost), brand and fleet (FORECAST-LEAD-DEALS-1118).
-  const unitCosts = new Map<string, { units: number; meanUsd: number }>();
+  // What sales funnel campaigns spent ALL IN per Unit of their first milestone, per scope (FORECAST-ENTRY-COST-BASIS-1118).
+  const entryCosts = new Map<string, EntryCostStat>();
   for (const r of [...campaign, ...brand, ...fleet]) {
     if (r.body.kind === "transition") stats.set(`${r.scope}\u0000${r.fromKey}\u0000${r.toKey}`, r.body.stat);
-    else if (r.scope !== "campaign") unitCosts.set(`${r.scope}\u0000${r.toKey}`, { units: r.body.stat.units, meanUsd: r.body.stat.costUsd.mean });
+    else if (r.body.kind === "entry_cost") entryCosts.set(`${r.scope}\u0000${r.toKey}`, r.body.stat);
   }
   const needed = new Map(basis.milestoneBasis.map((m) => [m.step, m]));
   // FORECAST-NO-TARGET-YET-1118: a milestone the ledger simply has not SEEN yet holds ZERO Units and is projected like
@@ -97,7 +97,7 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
       targetValueUsd: basis.input.targetValueUsd,
       transition: (scope, x, y) => stats.get(`${scope}\u0000${x}\u0000${y}`) ?? null,
       liveCampaignDelay: (x, y) => liveDelays.get(`${x}\u0000${y}`) ?? null,
-      unitCost: (scope, key) => unitCosts.get(`${scope}\u0000${key}`) ?? null,
+      entryCost: (scope, key) => entryCosts.get(`${scope}\u0000${key}`) ?? null,
       silverComputedAt,
     });
   // A milestone the ledger cannot count holds no Units to project from: the chain keeps the others.

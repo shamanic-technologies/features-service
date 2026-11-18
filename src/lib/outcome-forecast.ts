@@ -18,7 +18,7 @@
  *
  * ONE mechanism for every campaign and outcome (guard `outcome-silver.test.ts`).
  */
-import { delayCdfAt, gammaQuantile, MIN_DELAY_PAIRS, type DelayDistribution, type TransitionStat } from "./outcome-silver.js";
+import { delayCdfAt, gammaQuantile, MIN_DELAY_PAIRS, type DelayDistribution, type EntryCostStat, type TransitionStat } from "./outcome-silver.js";
 import { capacityUnavailableReason, expectedScheduleOf, SCHEDULE_DAYS, type SpendCapacityInput } from "./spend-capacity.js";
 
 export type HypothesisSource = "campaign" | "brand" | "fleet" | "plan" | "default";
@@ -48,7 +48,7 @@ export interface ScopeEvidence {
  */
 export const BLEND_PSEUDO_CASES = 10;
 /** Bump when a rule here changes what a stored forecast means: it is in the forecast cell's key (Silver is not re-swept for it). */
-export const FORECAST_RULE = "2026-11-18.5-entry-cost-own-source";
+export const FORECAST_RULE = "2026-11-18.6-entry-cost-all-in";
 /**
  * FORECAST-TUNNEL-1118. How SURE a rate is, apart from where its mean sits. The mean is blended with a fallback worth
  * `BLEND_PSEUDO_CASES`; the SPREAD each draw samples from must not treat that fallback as 10 observed cases when it is a
@@ -58,8 +58,25 @@ export const FORECAST_RULE = "2026-11-18.5-entry-cost-own-source";
  * nothing measured. So a step resting on the plan line alone is drawn from a very wide range, 1,000 cases from a tight one.
  */
 export const PLAN_LINE_SPREAD_CASES = 0.5;
-/** A brand's measured cost of one Unit stands as a fallback from this many Units; under it the fleet's is taken. */
-export const MIN_UNIT_COST_UNITS = 30;
+/** Other campaigns' all-in cost of a first-milestone Unit stands as a fallback from this many Units of theirs; under it the level is skipped. */
+export const MIN_ENTRY_COST_UNITS = 30;
+/** The two bases a cost per first-milestone Unit is stated on: every measured level is ALL IN, like the campaign's own. */
+export const ENTRY_COST_BASIS = { allIn: "all_in_spend_per_first_milestone_unit", plan: "plan_cost_per_target_over_units_needed" } as const;
+
+/** One level of the ladder the first milestone's cost rests on. */
+export interface EntryCostLevel {
+  level: EntryCostSource;
+  basis: (typeof ENTRY_COST_BASIS)[keyof typeof ENTRY_COST_BASIS];
+  /** The level's own cost per Unit; null = it states none (`skippedReason`). */
+  usdPerUnit: number | null;
+  /** The Units (and campaigns) it is measured on; null on the plan line. */
+  units: number | null;
+  campaigns: number | null;
+  /** Its share in the cost used. */
+  weight: number;
+  /** Why it weighs nothing: it could not be measured on the same basis, or a finer level was taken. */
+  skippedReason: string | null;
+}
 
 /** One level of the ladder a figure rests on, from the fallback up to the campaign. */
 export interface BlendLevel {
@@ -336,8 +353,9 @@ const quantileOf = (sorted: ArrayLike<number>, q: number): number => {
  * before default: the campaign's own cost (everything it spent ÷ its Units of the first milestone, from its FIRST Unit;
  * the uncertainty = bootstrap over its days), blended with its fallback by its Units (`BLEND_PSEUDO_CASES`, on the log
  * scale). The fallback
- * is a cost of ONE such Unit stated by its own source: the brand's, else the fleet's measured cost in the ledger, else
- * the plan line's own (its cost per Target ÷ its own Units needed per Target). Never the plan's cost per Target times
+ * is a cost of ONE such Unit on the SAME all-in basis: what the brand's other campaigns, else the fleet's, spent per Unit
+ * of that first milestone (FORECAST-ENTRY-COST-BASIS-1118), else the plan line's own (its cost per Target ÷ its own Units
+ * needed per Target). Never the plan's cost per Target times
  * yields measured elsewhere: a plan line assuming a default rate of 60% priced a message at $0.000008 once multiplied by
  * the fleet's measured 0.00007, where the campaign's own 27 messages cost $0.075 each. Nothing = null.
  */
@@ -693,8 +711,11 @@ export interface CampaignForecastInput {
    * links); null = none. Absent = nothing is read live.
    */
   liveCampaignDelay?: (fromKey: string, toKey: string) => DelayDistribution | null;
-  /** Silver: the measured cost of ONE Unit of an outcome at a scope (the ledger's stated production cost), with its Units; null = none. */
-  unitCost?: (scope: "brand" | "fleet", outcomeKey: string) => { units: number; meanUsd: number } | null;
+  /**
+   * Silver: what sales funnel campaigns with this FIRST milestone spent all in, and their Units of it, at a scope
+   * (`campaign` = this campaign's own stored row, taken out of its brand's and the fleet's pools); null = none.
+   */
+  entryCost?: (scope: "campaign" | "brand" | "fleet", outcomeKey: string) => EntryCostStat | null;
   silverComputedAt: string | null;
 }
 
@@ -782,21 +803,52 @@ export function campaignForecastOf(i: CampaignForecastInput) {
   const spendOn = new Map(i.spendByDay.map((d) => [d.date, d.spendUsd]));
   const unitsOn = new Map(entry.unitsByDay.map((d) => [d.date, d.units]));
   const costDays = [...new Set([...spendOn.keys(), ...unitsOn.keys()])].sort().map((date) => ({ spendUsd: spendOn.get(date) ?? 0, units: unitsOn.get(date) ?? 0 }));
-  // What the first milestone's cost falls back on: a cost of ONE such Unit from its own source, measured before default.
-  const measuredAt = (scope: "brand" | "fleet") => entry.ledgerKeys.map((k) => i.unitCost?.(scope, k) ?? null).filter((c): c is { units: number; meanUsd: number } => c !== null && c.units > 0 && c.meanUsd > 0).sort((x, y) => y.units - x.units)[0] ?? null;
-  const brandCost = measuredAt("brand");
-  const fleetCost = measuredAt("fleet");
+  // FORECAST-ENTRY-COST-BASIS-1118: every level of the cost ladder is on the SAME basis as the campaign's own figure:
+  // everything spent ÷ Units of the first milestone. Brand = the brand's OTHER sales funnel campaigns with this first
+  // milestone, pooled; fleet = the fleet's others; then the plan line's own cost per Unit. A level that cannot be measured
+  // all in is skipped with its reason, never replaced by the ledger cost of the Unit alone ($0.001 to send a message).
+  const entryKey = entry.ledgerKeys.map((k) => ({ k, n: i.entryCost?.("fleet", k)?.units ?? -1 })).sort((x, y) => y.n - x.n)[0]?.k ?? null;
+  const ownStored = entryKey === null ? null : i.entryCost?.("campaign", entryKey) ?? null;
+  const othersAt = (scope: "brand" | "fleet"): { usdPerUnit: number; units: number; campaigns: number } | { skip: string } => {
+    const pool = entryKey === null ? null : i.entryCost?.(scope, entryKey) ?? null;
+    if (pool === null) return { skip: "no_sales_funnel_campaign_with_this_first_milestone" };
+    const campaigns = pool.campaigns - (ownStored ? 1 : 0);
+    const units = pool.units - (ownStored?.units ?? 0);
+    const spendUsd = pool.spendUsd - (ownStored?.spendUsd ?? 0);
+    if (campaigns <= 0) return { skip: "no_other_sales_funnel_campaign_with_this_first_milestone" };
+    if (units < MIN_ENTRY_COST_UNITS) return { skip: "under_30_units_of_other_campaigns" };
+    if (spendUsd <= 0) return { skip: "no_spend_measured_on_other_campaigns" };
+    return { usdPerUnit: spendUsd / units, units, campaigns };
+  };
+  const brandLevel = othersAt("brand");
+  const fleetLevel = othersAt("fleet");
   const planOwn = i.plan.costPerTargetUsd !== null && i.plan.costPerTargetUsd > 0 && entry.neededPerTarget !== null && entry.neededPerTarget > 0 ? i.plan.costPerTargetUsd / entry.neededPerTarget : null;
   const fallback =
-    brandCost !== null && brandCost.units >= MIN_UNIT_COST_UNITS
-      ? { usdPerUnit: brandCost.meanUsd, source: "brand" as const, planBasis: null }
-      : fleetCost !== null
-        ? { usdPerUnit: fleetCost.meanUsd, source: "fleet" as const, planBasis: null }
+    "usdPerUnit" in brandLevel
+      ? { usdPerUnit: brandLevel.usdPerUnit, source: "brand" as const, planBasis: null }
+      : "usdPerUnit" in fleetLevel
+        ? { usdPerUnit: fleetLevel.usdPerUnit, source: "fleet" as const, planBasis: null }
         : planOwn !== null
           ? { usdPerUnit: planOwn, source: "plan" as const, planBasis: i.plan.basis }
           : null;
   const entryCost = chooseEntryCost(costDays, fallback, rng);
   if (entryCost === null) return empty("cost_unmeasured_and_plan_prices_no_target");
+  const usedBelow = entryCost.fallbackSource;
+  const below = (level: "brand" | "fleet", l: typeof brandLevel): EntryCostLevel => ({
+    level,
+    basis: ENTRY_COST_BASIS.allIn,
+    usdPerUnit: "usdPerUnit" in l ? l.usdPerUnit : null,
+    units: "usdPerUnit" in l ? l.units : null,
+    campaigns: "usdPerUnit" in l ? l.campaigns : null,
+    weight: usedBelow === level ? 1 - entryCost.weight : 0,
+    skippedReason: "skip" in l ? l.skip : usedBelow === level ? null : "finer_level_used",
+  });
+  const entryLevels: EntryCostLevel[] = [
+    { level: "campaign", basis: ENTRY_COST_BASIS.allIn, usdPerUnit: entryCost.measuredUsdPerUnit, units: entryCost.units, campaigns: entryCost.units === null ? null : 1, weight: entryCost.weight, skippedReason: entryCost.measuredUsdPerUnit === null ? "no_unit_of_the_first_milestone_yet" : null },
+    below("brand", brandLevel),
+    below("fleet", fleetLevel),
+    { level: "plan", basis: ENTRY_COST_BASIS.plan, usdPerUnit: planOwn, units: null, campaigns: null, weight: usedBelow === "plan" ? 1 - entryCost.weight : 0, skippedReason: planOwn === null ? (i.plan.costPerTargetUsd === null ? "plan_prices_no_target" : "plan_states_no_units_needed_per_target") : usedBelow === "plan" ? null : "finer_level_used" },
+  ];
 
 
   const run = (m: number) => {
@@ -832,7 +884,7 @@ export function campaignForecastOf(i: CampaignForecastInput) {
     unavailableReason: null as string | null,
     hypotheses: {
       budget,
-      entryCost: { step: entry.step, label: entry.label, source: entryCost.source, usdPerUnit: round(entryCost.usdPerUnit), p10: round(entryCost.p10), p90: round(entryCost.p90), spentUsd: entryCost.spentUsd, units: entryCost.units, measuredUsdPerUnit: entryCost.measuredUsdPerUnit === null ? null : round(entryCost.measuredUsdPerUnit), fallbackUsdPerUnit: entryCost.fallbackUsdPerUnit === null ? null : round(entryCost.fallbackUsdPerUnit), fallbackSource: entryCost.fallbackSource, weight: round(entryCost.weight, 4), planBasis: entryCost.planBasis },
+      entryCost: { step: entry.step, label: entry.label, source: entryCost.source, usdPerUnit: round(entryCost.usdPerUnit), p10: round(entryCost.p10), p90: round(entryCost.p90), spentUsd: entryCost.spentUsd, units: entryCost.units, measuredUsdPerUnit: entryCost.measuredUsdPerUnit === null ? null : round(entryCost.measuredUsdPerUnit), fallbackUsdPerUnit: entryCost.fallbackUsdPerUnit === null ? null : round(entryCost.fallbackUsdPerUnit), fallbackSource: entryCost.fallbackSource, weight: round(entryCost.weight, 4), planBasis: entryCost.planBasis, levels: entryLevels.map((l) => ({ ...l, usdPerUnit: l.usdPerUnit === null ? null : round(l.usdPerUnit), weight: round(l.weight, 4) })) },
       transitions: picks.map((p) => {
         const b = band(p.yield!.shape, p.yield!.rate);
         return {
