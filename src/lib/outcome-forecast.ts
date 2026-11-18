@@ -48,7 +48,16 @@ export interface ScopeEvidence {
  */
 export const BLEND_PSEUDO_CASES = 10;
 /** Bump when a rule here changes what a stored forecast means: it is in the forecast cell's key (Silver is not re-swept for it). */
-export const FORECAST_RULE = "2026-11-18.1-thin-sample-blend";
+export const FORECAST_RULE = "2026-11-18.2-tunnel-spread";
+/**
+ * FORECAST-TUNNEL-1118. How SURE a rate is, apart from where its mean sits. The mean is blended with a fallback worth
+ * `BLEND_PSEUDO_CASES`; the SPREAD each draw samples from must not treat that fallback as 10 observed cases when it is a
+ * guess. A rate's effective cases = the cases actually observed along its ladder, a fallback counting for what it was
+ * itself worth, at most 10. A PLAN LINE (a human's stated rate, not a measurement) is worth HALF a case: the weakest
+ * proper prior on a rate (Jeffreys' prior for a Poisson rate is Gamma(1/2)), the figure this file always gave a rate
+ * nothing measured. So a step resting on the plan line alone is drawn from a very wide range, 1,000 cases from a tight one.
+ */
+export const PLAN_LINE_SPREAD_CASES = 0.5;
 
 /** One level of the ladder a figure rests on, from the fallback up to the campaign. */
 export interface BlendLevel {
@@ -66,14 +75,21 @@ export interface BlendLevel {
   blendedRate: number;
   /** Share of this level's measurement in the rate finally used (the levels' shares sum to 1). */
   share: number;
+  /** The effective cases the rate is KNOWN by after this level (its spread): the fallback's own, at most 10, plus this level's cases. */
+  spreadCases: number;
 }
 
 export interface YieldHypothesis {
   /** The level weighing most in the rate used. */
   source: HypothesisSource;
-  /** Units of the next milestone per Unit of this one: Gamma(shape, rate). Its mean is the blended rate used. */
+  /**
+   * Units of the next milestone per Unit of this one: Gamma(shape, rate), what each draw samples. Its MEAN is the blended
+   * rate used; its SHAPE is `effectiveCases` (the spread: FORECAST-TUNNEL-1118).
+   */
   shape: number;
   rate: number;
+  /** The cases the rate is known by: few = a wide range of draws, thousands = a tight one. */
+  effectiveCases: number;
   /** Finer scopes that hold evidence but weigh less than `source`. */
   thinnerScopes: Array<"campaign" | "brand">;
   evidence: ScopeEvidence[];
@@ -117,12 +133,15 @@ export function chooseYield(s: TransitionStats, planRate: number | null, own: { 
   const ladder: Array<[HypothesisSource, { y: number; e: number } | null]> = [["fleet", less(f, b ?? c)], ["brand", less(b, c)], [measuredAnywhere ? "campaign" : "default", c]];
 
   const blend: BlendLevel[] = [];
+  // `shape` / `rate` carry the MEAN (the blend); `known` carries how sure it is (the spread), a separate count.
   let shape: number | null = null;
   let rate = 0;
+  let known = 0;
   if (planRate !== null && planRate > 0) {
     shape = K;
     rate = K / planRate;
-    blend.push({ level: "plan", cases: null, exposure: null, measuredRate: planRate, fallbackRate: null, weight: 1, blendedRate: planRate, share: 1 });
+    known = PLAN_LINE_SPREAD_CASES;
+    blend.push({ level: "plan", cases: null, exposure: null, measuredRate: planRate, fallbackRate: null, weight: 1, blendedRate: planRate, share: 1, spreadCases: known });
   }
   for (const [level, ev] of ladder) {
     if (ev === null || ev.e <= 0) continue;
@@ -130,7 +149,8 @@ export function chooseYield(s: TransitionStats, planRate: number | null, own: { 
     if (shape === null) {
       shape = 0.5 + ev.y;
       rate = ev.e;
-      blend.push({ level, cases: ev.y, exposure: ev.e, measuredRate, fallbackRate: null, weight: 1, blendedRate: shape / rate, share: 1 });
+      known = shape;
+      blend.push({ level, cases: ev.y, exposure: ev.e, measuredRate, fallbackRate: null, weight: 1, blendedRate: shape / rate, share: 1, spreadCases: known });
       continue;
     }
     // The level below, restated at K cases, updated by this level's own cases over its own exposure.
@@ -139,14 +159,20 @@ export function chooseYield(s: TransitionStats, planRate: number | null, own: { 
     const weight = ev.e / (priorRate + ev.e);
     shape = K + ev.y;
     rate = priorRate + ev.e;
+    // The fallback is restated at K cases for the MEAN; for the spread it counts what it was itself known by, at most K.
+    known = Math.min(K, known) + ev.y;
     sharesAfter(blend, weight);
-    blend.push({ level, cases: ev.y, exposure: ev.e, measuredRate, fallbackRate, weight, blendedRate: shape / rate, share: weight });
+    blend.push({ level, cases: ev.y, exposure: ev.e, measuredRate, fallbackRate, weight, blendedRate: shape / rate, share: weight, spreadCases: known });
   }
   if (shape === null) return null;
+  // What a draw samples: the blended mean, known by `known` cases.
+  const mean = shape / rate;
+  shape = known;
+  rate = known / mean;
   const source = heaviest(blend).level;
   const finer = (["campaign", "brand"] as const).filter((scope) => s[scope] !== null);
   const rank: Record<HypothesisSource, number> = { default: 0, plan: 0, fleet: 1, brand: 2, campaign: 3 };
-  return { source, shape, rate, thinnerScopes: finer.filter((scope) => rank[scope] > rank[source]), evidence, blend };
+  return { source, shape, rate, effectiveCases: known, thinnerScopes: finer.filter((scope) => rank[scope] > rank[source]), evidence, blend };
 }
 
 /** One level of the ladder a delay curve rests on. */
@@ -175,6 +201,8 @@ export interface DelayHypothesis {
   cdf: Array<{ hours: number; share: number }>;
   /** The ladder, default first. */
   blend: DelayBlendLevel[];
+  /** Each level's OWN curve with its share in the curve used: a draw takes ONE of them, by share (FORECAST-TUNNEL-1118). */
+  curves: Array<{ level: HypothesisSource; share: number; cdf: Array<{ hours: number; share: number }> }>;
 }
 
 /** With no pair measured anywhere: half the Units within this many days (the maturity window `lib/maturity.ts` has always assumed), exponential. */
@@ -216,7 +244,8 @@ export function chooseDelay(s: TransitionStats): DelayHypothesis {
   const K = BLEND_PSEUDO_CASES;
   let cdf = defaultDelayCdf();
   const blend: DelayBlendLevel[] = [{ level: "default", pairs: 0, medianHours: DEFAULT_DELAY_MEDIAN_DAYS * 24, weight: 1, share: 1 }];
-  const own = new Map<HypothesisSource, number>([["default", 0]]);
+  const own: Array<Array<{ hours: number; share: number }>> = [cdf];
+  const ownPairs = new Map<HypothesisSource, number>([["default", 0]]);
   const n = (scope: "campaign" | "brand" | "fleet") => s[scope]?.delay?.n ?? 0;
   const ladder: Array<["fleet" | "brand" | "campaign", number]> = [["fleet", n("fleet") - (s.brand?.delay ? n("brand") : n("campaign"))], ["brand", n("brand") - n("campaign")], ["campaign", n("campaign")]];
   for (const [scope, pairs] of ladder) {
@@ -226,11 +255,13 @@ export function chooseDelay(s: TransitionStats): DelayHypothesis {
     cdf = mixDelayCurves(d.cdf, cdf, weight);
     sharesAfter(blend, weight);
     blend.push({ level: scope, pairs, medianHours: d.medianHours, weight, share: weight });
-    own.set(scope, d.n);
+    own.push(d.cdf);
+    ownPairs.set(scope, d.n);
   }
   const source = heaviest(blend).level;
-  const pairs = own.get(source) ?? 0;
-  return { source, pairs, thinSample: source !== "default" && pairs < MIN_DELAY_PAIRS, medianHours: delayQuantileOf(cdf, 0.5), p10Hours: delayQuantileOf(cdf, 0.1), p90Hours: delayQuantileOf(cdf, 0.9), cdf, blend };
+  const pairs = ownPairs.get(source) ?? 0;
+  const curves = blend.map((l, k) => ({ level: l.level, share: l.share, cdf: own[k]! }));
+  return { source, pairs, thinSample: source !== "default" && pairs < MIN_DELAY_PAIRS, medianHours: delayQuantileOf(cdf, 0.5), p10Hours: delayQuantileOf(cdf, 0.1), p90Hours: delayQuantileOf(cdf, 0.9), cdf, blend, curves };
 }
 
 export interface EntryCostHypothesis {
@@ -314,7 +345,12 @@ export interface ForecastInput {
   milestones: readonly ForecastMilestone[];
   /** One per transition (milestone i -> i + 1). */
   yields: ReadonlyArray<Pick<YieldHypothesis, "shape" | "rate">>;
-  delays: ReadonlyArray<Pick<DelayHypothesis, "cdf">>;
+  /**
+   * `cdf` = the curve of the transition. `curves` (optional) = the candidate curves it is a mixture of, with their
+   * shares: each draw then takes ONE per transition, by share, so a curve resting on a default adds its own doubt to the
+   * tunnel. The mean over draws is the mixture's (a Poisson flow is linear in the curve): the expected figures do not move.
+   */
+  delays: ReadonlyArray<{ cdf: ReadonlyArray<{ hours: number; share: number }>; curves?: ReadonlyArray<{ share: number; cdf: ReadonlyArray<{ hours: number; share: number }> }> }>;
   entryCostDraws: readonly number[];
   /** USD the campaign spends per segment: [what is left of today, day + 1, day + 2, ...]. */
   spendUsd: readonly number[];
@@ -394,6 +430,9 @@ export function lagSharesOf(cdf: ReadonlyArray<{ hours: number; share: number }>
   return out;
 }
 
+/** A candidate curve weighing under this share of its mixture is not drawn (its share goes to the others): it bounds the curve choices computed. */
+const MIN_CURVE_SHARE = 0.02;
+
 const convolve = (flow: Float64Array, lag: readonly number[]): Float64Array => {
   const out = new Float64Array(flow.length);
   for (let t = 0; t < flow.length; t++) {
@@ -441,25 +480,38 @@ export function forecastOf(i: ForecastInput): ForecastOutput {
   const today = i.now.slice(0, 10);
   const T = i.searchDays + 1; // segment 0 = what is left of today
   const todayShare = (Date.parse(`${dayAfter(today, 1)}T00:00:00.000Z`) - Date.parse(i.now)) / DAY_MS;
-  const lags = i.delays.map((d) => lagSharesOf(d.cdf));
   const rng = rngOf(i.seed);
+  // The candidate curves of each transition (one when it states no mixture), each as shares per day of lag.
+  const candidates = i.delays.map((d) => {
+    const all = d.curves && d.curves.length > 0 ? d.curves.filter((c) => c.share >= MIN_CURVE_SHARE) : [];
+    const kept = all.length > 0 ? all : [{ share: 1, cdf: d.cdf }];
+    const total = kept.reduce((a, c) => a + c.share, 0);
+    return kept.map((c) => ({ share: c.share / total, lag: lagSharesOf(c.cdf) }));
+  });
 
-  // What money buys: the spend flow carried to each milestone by the delays (yields and cost applied per draw).
-  const bought: Float64Array[] = [Float64Array.from({ length: T }, (_, t) => i.spendUsd[t] ?? 0)];
-  for (let k = 1; k < K; k++) bought.push(convolve(bought[k - 1]!, lags[k - 1]!));
-  // What already ran: the Units of milestone j still maturing into j + 1, carried further down (yields applied per draw).
-  const maturing: Array<Array<Float64Array | null>> = i.milestones.map(() => i.milestones.map(() => null));
-  for (let j = 0; j < K - 1; j++) {
-    const lag = lags[j]!;
-    const flow = new Float64Array(T);
-    for (const d of i.milestones[j]!.unitsByDay) {
-      const age = Math.round((Date.parse(`${today}T00:00:00.000Z`) - Date.parse(`${d.date}T00:00:00.000Z`)) / DAY_MS);
-      if (age < 0 || d.units <= 0) continue;
-      for (let t = 0; t < T && age + t < lag.length; t++) flow[t]! += d.units * lag[age + t]! * (t === 0 ? todayShare : 1);
+  // The flows under ONE choice of curve per transition (memoised: a few choices carry nearly every draw).
+  const flowsOf = (choice: readonly number[]) => {
+    const lags = choice.map((c, k) => candidates[k]![c]!.lag);
+    // What money buys: the spend flow carried to each milestone by the delays (yields and cost applied per draw).
+    const bought: Float64Array[] = [Float64Array.from({ length: T }, (_, t) => i.spendUsd[t] ?? 0)];
+    for (let k = 1; k < K; k++) bought.push(convolve(bought[k - 1]!, lags[k - 1]!));
+    // What already ran: the Units of milestone j still maturing into j + 1, carried further down (yields applied per draw).
+    const maturing: Array<Array<Float64Array | null>> = i.milestones.map(() => i.milestones.map(() => null));
+    for (let j = 0; j < K - 1; j++) {
+      const lag = lags[j]!;
+      const flow = new Float64Array(T);
+      for (const d of i.milestones[j]!.unitsByDay) {
+        const age = Math.round((Date.parse(`${today}T00:00:00.000Z`) - Date.parse(`${d.date}T00:00:00.000Z`)) / DAY_MS);
+        if (age < 0 || d.units <= 0) continue;
+        for (let t = 0; t < T && age + t < lag.length; t++) flow[t]! += d.units * lag[age + t]! * (t === 0 ? todayShare : 1);
+      }
+      maturing[j]![j + 1] = flow;
+      for (let k = j + 2; k < K; k++) maturing[j]![k] = convolve(maturing[j]![k - 1]!, lags[k - 1]!);
     }
-    maturing[j]![j + 1] = flow;
-    for (let k = j + 2; k < K; k++) maturing[j]![k] = convolve(maturing[j]![k - 1]!, lags[k - 1]!);
-  }
+    return { bought, maturing };
+  };
+  const flows = new Map<string, ReturnType<typeof flowsOf>>();
+  const choice = new Array<number>(Math.max(K - 1, 0)).fill(0);
 
   const S = i.seriesDays;
   const cum: Float64Array[][] = i.milestones.map(() => Array.from({ length: S }, () => new Float64Array(i.draws)));
@@ -472,6 +524,18 @@ export function forecastOf(i: ForecastInput): ForecastOutput {
   for (let r = 0; r < i.draws; r++) {
     for (let k = 0; k < K - 1; k++) y[k] = gammaDraw(i.yields[k]!.shape, rng) / i.yields[k]!.rate;
     const cost = i.entryCostDraws[Math.floor(rng() * i.entryCostDraws.length)]!;
+    // One curve per transition for this draw, by share (no random number spent where there is only one).
+    for (let k = 0; k < K - 1; k++) {
+      const c = candidates[k]!;
+      let pick = 0;
+      if (c.length > 1) {
+        let u = rng();
+        while (pick < c.length - 1 && u >= c[pick]!.share) u -= c[pick++]!.share;
+      }
+      choice[k] = pick;
+    }
+    const key = choice.join(",");
+    const { bought, maturing } = flows.get(key) ?? flows.set(key, flowsOf(choice)).get(key)!;
     for (let k = 0; k < K; k++) {
       // Units of k per first-milestone Unit, and per Unit of each milestone before it.
       let fromEntry = 1;
@@ -672,7 +736,7 @@ export function campaignForecastOf(i: CampaignForecastInput) {
       now: i.now,
       milestones: i.milestones,
       yields: picks.map((p) => p.yield!),
-      delays: picks.map((p) => p.delay),
+      delays: picks.map((p) => ({ cdf: p.delay.cdf, curves: p.delay.curves })),
       entryCostDraws: entryCost.draws,
       spendUsd: schedule?.outcomes ?? [],
       targetRevenueUsd: i.targetValueUsd,
@@ -716,7 +780,10 @@ export function campaignForecastOf(i: CampaignForecastInput) {
             p90: round(b.p90),
             thinnerScopes: p.yield!.thinnerScopes,
             pseudoCases: BLEND_PSEUDO_CASES,
-            blend: p.yield!.blend.map((l) => ({ level: l.level, cases: l.cases, exposure: l.exposure === null ? null : round(l.exposure), measuredRate: l.measuredRate === null ? null : round(l.measuredRate), fallbackRate: l.fallbackRate === null ? null : round(l.fallbackRate), weight: round(l.weight, 4), blendedRate: round(l.blendedRate), share: round(l.share, 4) })),
+            // The spread, apart from the mean (FORECAST-TUNNEL-1118): the cases the rate is known by, and a plan line's worth.
+            effectiveCases: round(p.yield!.effectiveCases),
+            planLineSpreadCases: PLAN_LINE_SPREAD_CASES,
+            blend: p.yield!.blend.map((l) => ({ level: l.level, cases: l.cases, exposure: l.exposure === null ? null : round(l.exposure), measuredRate: l.measuredRate === null ? null : round(l.measuredRate), fallbackRate: l.fallbackRate === null ? null : round(l.fallbackRate), weight: round(l.weight, 4), blendedRate: round(l.blendedRate), share: round(l.share, 4), spreadCases: round(l.spreadCases) })),
             evidence: p.yield!.evidence,
           },
           delay: {
