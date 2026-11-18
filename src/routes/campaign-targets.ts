@@ -263,7 +263,7 @@ router.get("/brands/:brandId/campaign-targets", apiKeyAuth, async (req, res) => 
     const body = await servedCached({
       view: "brand-campaign-targets",
       // `units`: the counting rule (UNIT-LINKS-CONSUME-1117: carried Units counted); a cell stored before it is never served.
-      scopeKey: buildScopeKey(brandId, { orgId: auth.orgId, pricing, campaign: one ?? "ongoing", units: "own+carried" }),
+      scopeKey: buildScopeKey(brandId, { orgId: auth.orgId, pricing, campaign: one ?? "ongoing", units: "own+carried", zero: "measured" }),
       orgId: auth.orgId,
       ...routeCacheFingerprints("/brands/{brandId}/campaign-targets"),
       compute: () => computeCampaignTargets(brandId, one, rows, headers, pricing),

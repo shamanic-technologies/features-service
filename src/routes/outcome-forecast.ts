@@ -22,19 +22,16 @@ import { FLEET_SCOPE_ID, SILVER_RULE, type TransitionStat } from "../lib/outcome
 import { campaignForecastOf, FORECAST_RULE } from "../lib/outcome-forecast.js";
 
 /**
- * FORECAST-NO-TARGET-YET-1118. What a milestone with no count means FOR THE FORECAST, one rule for every outcome:
- *  - `no_unit_makes_it`: the ledger is readable, a producer declares this outcome somewhere, it saw none on this campaign
- *    and the campaign spent on no unit making it (a step the client's own team makes, a campaign too young). Nothing is
- *    unknown: the count is ZERO, and the milestone is projected by the same ladder as any other.
- *  - `ledger_unreadable`: we could not read the ledger now: a zero would be a guess. Refused (it clears by itself).
- *  - `outcome_not_declared_in_ledger`: the brand's runs CONSUMED this outcome and no run declared producing it: Units
- *    exist that the ledger cannot count. Refused: zero would be false.
- *  - `no_producer_declares_outcome`: no run of the fleet ever declared this outcome: nothing could ever be counted or
- *    measured for it. Refused.
- *  - any other reason: refused (unknown = never read as zero).
+ * What a milestone with NO count means for the forecast (FORECAST-NO-TARGET-YET-1118). A milestone the ledger simply has
+ * not seen yet is a measured ZERO on its card since FORECAST-FRESH-EVIDENCE-1118 (count 0), so it is projected like any
+ * other. A null count is one the ledger CANNOT count, and is left out:
+ *  - `ledger_unreadable`: we could not read the ledger now (it clears by itself);
+ *  - `outcome_not_declared_in_ledger`: the brand's runs CONSUMED this outcome and no run declared producing it;
+ *  - `no_producer_declares_outcome`: no run of the fleet ever declared this outcome;
+ *  - any other reason: unknown is never read as zero.
  */
-export const FORECAST_ZERO_COUNT_REASONS: ReadonlySet<string> = new Set(["no_unit_makes_it"]);
-export const forecastCountsAsZero = (reason: string | null): boolean => reason !== null && FORECAST_ZERO_COUNT_REASONS.has(reason);
+/** Why a milestone holding zero Units is left out of the chain: no rate is measured or planned to or from it. */
+export const ZERO_MIDDLE_LEFT_OUT = "zero_units_and_no_rate_around_it";
 /** The reasons a Target the ledger cannot count refuses the forecast under (the closed list the page words). */
 export const TARGET_REFUSAL_REASONS = ["target_ledger_unreadable", "target_outcome_not_declared_in_ledger", "target_no_producer_declares_outcome", "target_not_counted_in_ledger"] as const;
 export function targetRefusalOf(reason: string | null): (typeof TARGET_REFUSAL_REASONS)[number] {
@@ -61,7 +58,7 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
   // FORECAST-NO-TARGET-YET-1118: a milestone the ledger simply has not SEEN yet holds ZERO Units and is projected like
   // any other (a young campaign with no Target yet is exactly what a forecast is for). Only a milestone the ledger
   // CANNOT count is left out, and a Target it cannot count refuses the forecast under its own reason.
-  const projected = (m: { count: number | null; countUnavailableReason: string | null }) => m.count !== null || forecastCountsAsZero(m.countUnavailableReason);
+  const projected = (m: { count: number | null }) => m.count !== null;
   const target = basis.row.milestones.find((m) => m.isTarget) ?? null;
   const targetCounted = target !== null && projected(target);
   const forecastOver = (chain: typeof basis.row.milestones) =>
@@ -85,7 +82,7 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
   // A zero milestone in the MIDDLE with no rate measured or planned to or from it would refuse a forecast its neighbours
   // can carry: the chain then goes on without it (as it did before it was kept), and it is listed as left out.
   if (body.unavailableReason?.startsWith("yield_unmeasured:")) {
-    const without = basis.row.milestones.filter((m) => m.count !== null || (m.isTarget && projected(m)));
+    const without = chain.filter((m, k) => m.isTarget || k === 0 || m.count !== 0);
     if (without.length < chain.length) {
       const retry = forecastOver(without);
       if (retry.unavailableReason === null) {
@@ -102,7 +99,7 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
     pricing,
     costBasis: "charged" as const,
     // The milestones left OUT of the projection (the ledger cannot count them), each with why.
-    uncountedMilestones: basis.row.milestones.filter((m) => !inChain.has(m.step)).map((m) => ({ step: m.step, label: m.label, reason: m.countUnavailableReason })),
+    uncountedMilestones: basis.row.milestones.filter((m) => !inChain.has(m.step)).map((m) => ({ step: m.step, label: m.label, reason: m.count === null ? m.countUnavailableReason : ZERO_MIDDLE_LEFT_OUT })),
     ...body,
     unavailableReason: basis.row.target !== null && !targetCounted ? targetRefusalOf(target?.countUnavailableReason ?? null) : body.unavailableReason,
   };
@@ -121,7 +118,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:salesFunnelCampaignId/outco
     const sweep = await readCurrentSilverSweep();
     const body = await servedCached({
       view: "campaign-outcome-forecast",
-      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, gold: FORECAST_RULE, zero: "not-seen-yet", units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
+      scopeKey: buildScopeKey(row.id, { orgId: auth.orgId, brandId, pricing, silver: sweep?.sweptAt ?? "none", rule: SILVER_RULE, gold: FORECAST_RULE, units: row.units.map((u) => u.campaignId).sort().join("+"), target: row.target ?? "" }),
       orgId: auth.orgId,
       ttlMs: TTL_MS,
       responseShape: routeResponseShapeFingerprint(PATH),

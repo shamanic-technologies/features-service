@@ -48,7 +48,7 @@ export interface ScopeEvidence {
  */
 export const BLEND_PSEUDO_CASES = 10;
 /** Bump when a rule here changes what a stored forecast means: it is in the forecast cell's key (Silver is not re-swept for it). */
-export const FORECAST_RULE = "2026-11-18.2-tunnel-spread";
+export const FORECAST_RULE = "2026-11-18.3-live-campaign-evidence";
 /**
  * FORECAST-TUNNEL-1118. How SURE a rate is, apart from where its mean sits. The mean is blended with a fallback worth
  * `BLEND_PSEUDO_CASES`; the SPREAD each draw samples from must not treat that fallback as 10 observed cases when it is a
@@ -95,6 +95,12 @@ export interface YieldHypothesis {
   evidence: ScopeEvidence[];
   /** The ladder, fallback first: each level's raw rate with its cases, what it fell back on, its weight and the result. */
   blend: BlendLevel[];
+  /**
+   * Where the campaign level's cases come from: `silver` = the stored sweep; `live_counts` = the campaign page's own counts
+   * (Silver holds no row for this campaign on this transition yet: FORECAST-FRESH-EVIDENCE-1118); `own_counts` = the same
+   * counts uncensored (nothing measured anywhere); null = the campaign holds no evidence.
+   */
+  campaignEvidence: "silver" | "live_counts" | "own_counts" | null;
 }
 
 export interface TransitionStats {
@@ -119,18 +125,27 @@ const heaviest = <T extends { share: number; level: HypothesisSource }>(levels: 
  * campaign measured, each BLENDED into the level below by its own cases (`BLEND_PSEUDO_CASES`). A level counts what the
  * finer ones do not already hold (the fleet without the brand, the brand without the campaign): no case weighs twice.
  * With no plan rate the coarsest measured level stands alone (half a case added: never a zero rate). Nothing at all = null.
+ *
+ * FORECAST-FRESH-EVIDENCE-1118: `live` = the campaign's cases as its page counts them NOW (`to` Units over the exposure of
+ * its `from` Units, censored by the delay curve). The campaign level takes them when Silver holds no row for it (a campaign
+ * younger than the last daily sweep read the fleet's rate alone: 2.25 messages per lead where its own counts said 79 over
+ * 106). They are not yet in the brand's or the fleet's stored counts, so nothing is taken away from those.
  */
-export function chooseYield(s: TransitionStats, planRate: number | null, own: { fromUnits: number; toUnits: number }): YieldHypothesis | null {
+export function chooseYield(s: TransitionStats, planRate: number | null, own: { fromUnits: number; toUnits: number }, live: { toUnits: number; exposure: number } | null = null): YieldHypothesis | null {
   const evidence = evidenceOf(s);
   const K = BLEND_PSEUDO_CASES;
   const of = (t: TransitionStat | null) => (t ? { y: t.toUnits, e: Math.max(t.exposure, 0) } : null);
   const less = (a: { y: number; e: number } | null, x: { y: number; e: number } | null) => (a ? { y: Math.max(a.y - (x?.y ?? 0), 0), e: Math.max(a.e - (x?.e ?? 0), 0) } : null);
   const measuredAnywhere = s.campaign !== null || s.brand !== null || s.fleet !== null;
-  // With no Silver stat at all, the campaign's own counts are its evidence (uncensored: nothing says how long it takes).
-  const c = measuredAnywhere ? of(s.campaign) : { y: own.toUnits, e: own.fromUnits };
+  const stored = of(s.campaign);
+  const fresh = stored === null && live !== null && live.exposure > 0 ? { y: live.toUnits, e: live.exposure } : null;
+  // With nothing stored or live, and no Silver stat at all, the campaign's own counts are its evidence (uncensored).
+  const c = stored ?? fresh ?? (measuredAnywhere ? null : { y: own.toUnits, e: own.fromUnits });
+  const campaignEvidence = stored ? ("silver" as const) : fresh ? ("live_counts" as const) : c && c.e > 0 ? ("own_counts" as const) : null;
   const b = of(s.brand);
   const f = of(s.fleet);
-  const ladder: Array<[HypothesisSource, { y: number; e: number } | null]> = [["fleet", less(f, b ?? c)], ["brand", less(b, c)], [measuredAnywhere ? "campaign" : "default", c]];
+  // Only what Silver STORED for the campaign is inside the brand's and the fleet's stored counts.
+  const ladder: Array<[HypothesisSource, { y: number; e: number } | null]> = [["fleet", less(f, b ?? stored)], ["brand", less(b, stored)], [stored || fresh ? "campaign" : "default", c]];
 
   const blend: BlendLevel[] = [];
   // `shape` / `rate` carry the MEAN (the blend); `known` carries how sure it is (the spread), a separate count.
@@ -170,9 +185,9 @@ export function chooseYield(s: TransitionStats, planRate: number | null, own: { 
   shape = known;
   rate = known / mean;
   const source = heaviest(blend).level;
-  const finer = (["campaign", "brand"] as const).filter((scope) => s[scope] !== null);
+  const finer = (["campaign", "brand"] as const).filter((scope) => s[scope] !== null || (scope === "campaign" && fresh !== null));
   const rank: Record<HypothesisSource, number> = { default: 0, plan: 0, fleet: 1, brand: 2, campaign: 3 };
-  return { source, shape, rate, effectiveCases: known, thinnerScopes: finer.filter((scope) => rank[scope] > rank[source]), evidence, blend };
+  return { source, shape, rate, effectiveCases: known, thinnerScopes: finer.filter((scope) => rank[scope] > rank[source]), evidence, blend, campaignEvidence };
 }
 
 /** One level of the ladder a delay curve rests on. */
@@ -716,7 +731,12 @@ export function campaignForecastOf(i: CampaignForecastInput) {
     const stats: TransitionStats = best === null ? { campaign: null, brand: null, fleet: null } : { campaign: i.transition("campaign", best.a, best.b), brand: i.transition("brand", best.a, best.b), fleet: i.transition("fleet", best.a, best.b) };
     const own = { fromUnits: m.unitsByDay.reduce((s, d) => s + d.units, 0), toUnits: next.unitsByDay.reduce((s, d) => s + d.units, 0) };
     const planRate = m.neededPerTarget !== null && next.neededPerTarget !== null && m.neededPerTarget > 0 ? next.neededPerTarget / m.neededPerTarget : null;
-    return { from: m, to: next, keys: best, yield: chooseYield(stats, planRate, own), delay: chooseDelay(stats) };
+    const delay = chooseDelay(stats);
+    // The campaign's cases as the page counts them now: each `from` Unit counts for the share of its `to` Units already
+    // due at its age on the curve the projection uses (the censoring Silver applies; midday of its day).
+    const today0 = Date.parse(`${i.now.slice(0, 10)}T00:00:00.000Z`);
+    const exposure = m.unitsByDay.reduce((s, d) => s + d.units * delayCdfAt(delay.cdf, (today0 - Date.parse(`${d.date}T00:00:00.000Z`)) / 3_600_000 + 12), 0);
+    return { from: m, to: next, keys: best, yield: chooseYield(stats, planRate, own, { toUnits: own.toUnits, exposure }), delay };
   });
   const missing = picks.find((p) => p.yield === null);
   if (missing) return empty(`yield_unmeasured:${missing.from.step}->${missing.to.step}`);
@@ -780,6 +800,7 @@ export function campaignForecastOf(i: CampaignForecastInput) {
             p90: round(b.p90),
             thinnerScopes: p.yield!.thinnerScopes,
             pseudoCases: BLEND_PSEUDO_CASES,
+            campaignEvidence: p.yield!.campaignEvidence,
             // The spread, apart from the mean (FORECAST-TUNNEL-1118): the cases the rate is known by, and a plan line's worth.
             effectiveCases: round(p.yield!.effectiveCases),
             planLineSpreadCases: PLAN_LINE_SPREAD_CASES,
