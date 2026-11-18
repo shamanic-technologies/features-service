@@ -113,7 +113,12 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
     const res = await request(app).get(URL);
     expect(readSilverStats).not.toHaveBeenCalled();
     expect(res.body.silverComputedAt).toBeNull();
-    expect(res.body.hypotheses.transitions.map((t: { yield: { source: string }; delay: { source: string } }) => [t.yield.source, t.delay.source])).toEqual([["plan", "default"], ["plan", "default"]]);
+    // The plan line's rate, blended with the campaign's own counts (THIN-SAMPLE-BLEND-1118): the ladder names both.
+    for (const t of res.body.hypotheses.transitions as Array<{ yield: { source: string; blend: Array<{ level: string }> }; delay: { source: string } }>) {
+      expect(t.yield.blend[0]!.level).toBe("plan");
+      expect(t.yield.blend.map((l) => l.level).filter((l) => !["plan", "default"].includes(l))).toEqual([]);
+      expect(t.delay.source).toBe("default");
+    }
     expect(res.body.forecast).not.toBeNull();
   });
 

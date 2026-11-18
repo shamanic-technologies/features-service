@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { campaignForecastOf, chooseDelay, chooseEntryCost, chooseYield, forecastOf, lagSharesOf, rngOf, scaledCapacity, DEFAULT_DELAY_MEDIAN_DAYS, type CampaignForecastInput, type ForecastInput } from "./outcome-forecast.js";
+import { campaignForecastOf, chooseDelay, chooseEntryCost, chooseYield, delayQuantileOf, forecastOf, lagSharesOf, mixDelayCurves, rngOf, scaledCapacity, DEFAULT_DELAY_MEDIAN_DAYS, type CampaignForecastInput, type ForecastInput } from "./outcome-forecast.js";
 import { rateEstimateOf, type DelayDistribution, type TransitionStat } from "./outcome-silver.js";
 import type { SpendCapacityInput } from "./spend-capacity.js";
 
@@ -7,47 +7,98 @@ const prior = { shape: 0.5, rate: 500 };
 const delayOf = (n: number, hours = 48): DelayDistribution => ({ n, meanHours: hours, medianHours: hours, p10Hours: hours / 2, p25Hours: hours / 2, p75Hours: hours * 2, p90Hours: hours * 2, cdf: [{ hours: hours * 2, share: 1 }] });
 const stat = (fromUnits: number, toUnits: number, pairs = 0): TransitionStat => ({ fromUnits, toUnits, foreignToUnits: 0, linkedToUnits: pairs, linkCoverage: toUnits > 0 ? pairs / toUnits : null, exposure: fromUnits, censoredBy: null, yield: rateEstimateOf({ toUnits, exposure: fromUnits }, prior), prior, delay: pairs > 0 ? delayOf(pairs) : null });
 
-describe("chooseYield (campaign measured > brand measured > fleet measured > plan > default)", () => {
-  it("the campaign's own yield when its exposure outweighs the fleet prior", () => {
-    const y = chooseYield({ campaign: stat(3000, 6), brand: stat(9000, 30), fleet: stat(90000, 200) }, 0.05, { fromUnits: 3000, toUnits: 6 })!;
-    expect(y).toMatchObject({ source: "campaign", shape: 6.5, rate: 3500, thinnerScopes: [] });
-    expect(y.evidence.map((e) => e.scope)).toEqual(["campaign", "brand", "fleet"]);
+describe("chooseYield: each level blended into the one below by its own cases (THIN-SAMPLE-BLEND-1118)", () => {
+  const none = { campaign: null, brand: null, fleet: null };
+  const mean = (y: { shape: number; rate: number }) => y.shape / y.rate;
+
+  it("n = 0 equals the fallback; a large n equals the measured rate; monotone between", () => {
+    const plan = 0.04;
+    // The fleet measured 10% over a growing exposure, against a plan line of 4%.
+    const at = (exposure: number) => chooseYield({ campaign: null, brand: null, fleet: stat(exposure, exposure * 0.1) }, plan, { fromUnits: 0, toUnits: 0 })!;
+    const zero = chooseYield({ campaign: null, brand: null, fleet: stat(0, 0) }, plan, { fromUnits: 0, toUnits: 0 })!;
+    expect(mean(zero)).toBeCloseTo(plan, 12);
+    expect(zero.source).toBe("plan");
+    const sizes = [10, 30, 100, 250, 1000, 10_000, 1_000_000];
+    const means = sizes.map((e) => mean(at(e)));
+    for (let k = 1; k < means.length; k++) expect(means[k]!).toBeGreaterThan(means[k - 1]!);
+    expect(means[0]!).toBeGreaterThan(plan);
+    expect(means[means.length - 1]!).toBeCloseTo(0.1, 4);
+    // The weight is the cases the fallback would expect over those + 10: 250 exposure at 4% = 10 expected cases = half.
+    expect(at(250).blend[1]).toMatchObject({ level: "fleet", cases: 25, exposure: 250, measuredRate: 0.1, fallbackRate: 0.04, weight: 0.5 });
+    expect(mean(at(250))).toBeCloseTo(0.07, 12);
+    expect(at(250).source).toBe("fleet"); // an even split names the measured level
+    expect(at(30).source).toBe("plan");
   });
-  it("a thin campaign falls to its brand, and says so", () => {
-    expect(chooseYield({ campaign: stat(100, 0), brand: stat(9000, 30), fleet: stat(90000, 200) }, null, { fromUnits: 100, toUnits: 0 })).toMatchObject({ source: "brand", shape: 30.5, rate: 9500, thinnerScopes: ["campaign"] });
+
+  it("Wide Email's last step: 3 cases over 23 of exposure barely move the plan line (0.129 raw, 0.042 plan)", () => {
+    const fleet: TransitionStat = { ...stat(70, 3), exposure: 23.3 };
+    const y = chooseYield({ campaign: { ...stat(2, 0), exposure: 0.8 }, brand: { ...stat(2, 0), exposure: 0.8 }, fleet }, 1 / 24, { fromUnits: 2, toUnits: 0 })!;
+    expect(y.source).toBe("plan");
+    expect(y.blend.map((l) => l.level)).toEqual(["plan", "fleet", "campaign"]); // the brand holds nothing its campaign does not
+    const [planLevel, fleetLevel, campaignLevel] = y.blend as [typeof y.blend[number], typeof y.blend[number], typeof y.blend[number]];
+    expect(fleetLevel.measuredRate).toBeCloseTo(3 / 22.5, 9); // the fleet WITHOUT the campaign: no case weighs twice
+    expect(fleetLevel.weight).toBeCloseTo(22.5 / 262.5, 9);
+    expect(fleetLevel.blendedRate).toBeCloseTo(13 / 262.5, 9); // 0.0495, not 0.129
+    expect(mean(y)).toBeGreaterThan(1 / 24);
+    expect(mean(y)).toBeLessThan(0.05);
+    expect(planLevel.share + fleetLevel.share + campaignLevel.share).toBeCloseTo(1, 12);
+    expect(planLevel.share).toBeGreaterThan(0.9);
+    expect(y.thinnerScopes).toEqual(["campaign", "brand"]);
   });
-  it("campaign and brand both thin: the fleet prior, nudged by the campaign's own thin evidence", () => {
-    expect(chooseYield({ campaign: stat(2, 0), brand: stat(40, 1), fleet: stat(90000, 200) }, 0.05, { fromUnits: 2, toUnits: 0 })).toMatchObject({ source: "fleet", shape: 0.5, rate: 502, thinnerScopes: ["campaign", "brand"] });
-    expect(chooseYield({ campaign: null, brand: null, fleet: stat(90000, 200) }, 0.05, { fromUnits: 0, toUnits: 0 })).toMatchObject({ source: "fleet", thinnerScopes: [] });
-    // UNIT-LINKS-CONSUME-1117-FIX: each scope's evidence says how much of its counted Units the ledger's links tie.
+
+  it("a campaign with thousands of cases reads as itself; a thin one leans on its brand, then the fleet", () => {
+    const thick = chooseYield({ campaign: stat(4000, 3600), brand: stat(4000, 3600), fleet: stat(90000, 200000) }, 0.5, { fromUnits: 4000, toUnits: 3600 })!;
+    expect(thick.source).toBe("campaign");
+    expect(mean(thick)).toBeCloseTo(0.9, 2);
+    expect(thick.thinnerScopes).toEqual([]);
+    const thin = chooseYield({ campaign: stat(100, 0), brand: stat(9100, 30), fleet: stat(99100, 230) }, null, { fromUnits: 100, toUnits: 0 })!;
+    expect(thin.source).toBe("brand");
+    expect(thin.thinnerScopes).toEqual(["campaign"]);
+    expect(thin.blend.map((l) => [l.level, l.cases, l.exposure])).toEqual([["fleet", 200, 90000], ["brand", 30, 9000], ["campaign", 0, 100]]);
+    expect(thin.blend[0]).toMatchObject({ fallbackRate: null, weight: 1 }); // no plan rate: the coarsest measured level stands alone
+    // Each scope's evidence says how much of its counted Units the ledger's links tie.
     expect(chooseYield({ campaign: stat(3000, 2700, 1800), brand: null, fleet: stat(90000, 200, 150) }, null, { fromUnits: 3000, toUnits: 2700 })!.evidence).toEqual([
       { scope: "campaign", fromUnits: 3000, toUnits: 2700, linkedToUnits: 1800, linkCoverage: 1800 / 2700, exposure: 3000, delayPairs: 1800 },
       { scope: "fleet", fromUnits: 90000, toUnits: 200, linkedToUnits: 150, linkCoverage: 0.75, exposure: 90000, delayPairs: 150 },
     ]);
   });
-  it("never measured anywhere: the plan line's rate, then the campaign's own counts, then nothing", () => {
-    const none = { campaign: null, brand: null, fleet: null };
+
+  it("never measured anywhere: the plan line's rate blended with the campaign's own counts, then those counts alone, then nothing", () => {
     const plan = chooseYield(none, 0.05, { fromUnits: 2, toUnits: 0 })!;
     expect(plan.source).toBe("plan");
-    expect(plan.shape / plan.rate).toBeCloseTo(0.5 / 12, 9); // half a Unit over 10 + 2 from-Units: the plan's 5%, pulled by 2 Units with nothing
+    expect(mean(plan)).toBeCloseTo(10 / 202, 12); // ten cases at 5%, pulled by 2 Units with nothing
     expect(chooseYield(none, null, { fromUnits: 50, toUnits: 5 })).toMatchObject({ source: "default", shape: 5.5, rate: 50 });
     expect(chooseYield(none, null, { fromUnits: 0, toUnits: 0 })).toBeNull();
   });
 });
 
-describe("chooseDelay", () => {
-  it("the finest scope with at least 10 pairs", () => {
-    expect(chooseDelay({ campaign: stat(1, 1, 3), brand: stat(1, 1, 12), fleet: stat(1, 1, 400) })).toMatchObject({ source: "brand", pairs: 12, thinSample: false });
-  });
-  it("every sample thin: the largest one measured still beats the default, flagged thin", () => {
-    expect(chooseDelay({ campaign: stat(1, 1, 2), brand: null, fleet: stat(1, 1, 3) })).toMatchObject({ source: "fleet", pairs: 3, thinSample: true });
-  });
+describe("chooseDelay: each measured curve mixed into the one below by its own pairs (THIN-SAMPLE-BLEND-1118)", () => {
   it("no pair anywhere: the default, half within 21 days", () => {
     const d = chooseDelay({ campaign: null, brand: stat(5, 0), fleet: null });
-    expect(d).toMatchObject({ source: "default", pairs: 0, medianHours: DEFAULT_DELAY_MEDIAN_DAYS * 24 });
+    expect(d).toMatchObject({ source: "default", pairs: 0, thinSample: false });
+    expect(d.medianHours).toBeCloseTo(DEFAULT_DELAY_MEDIAN_DAYS * 24, 6);
     const lag = lagSharesOf(d.cdf);
     expect(lag.slice(0, 21).reduce((a, v) => a + v, 0)).toBeCloseTo(0.5, 2);
     expect(lag.reduce((a, v) => a + v, 0)).toBeCloseTo(1, 9);
+  });
+  it("2 pairs no longer set the curve alone: the default still weighs most, and it says so", () => {
+    const d = chooseDelay({ campaign: null, brand: null, fleet: stat(1, 1, 2) });
+    expect(d.source).toBe("default");
+    expect(d.blend).toEqual([{ level: "default", pairs: 0, medianHours: 504, weight: 1, share: 10 / 12 }, { level: "fleet", pairs: 2, medianHours: 48, weight: 2 / 12, share: 2 / 12 }]);
+    expect(d.medianHours).toBeLessThan(504);
+    expect(d.medianHours).toBeGreaterThan(300);
+    expect(mixDelayCurves([{ hours: 10, share: 1 }], [{ hours: 20, share: 1 }], 0.25)).toEqual([{ hours: 10, share: 0.625 }, { hours: 20, share: 1 }]);
+    expect(delayQuantileOf([{ hours: 10, share: 0.625 }, { hours: 20, share: 1 }], 0.5)).toBe(8);
+  });
+  it("thousands of pairs read as themselves; a level counts only the pairs the finer ones do not hold", () => {
+    const d = chooseDelay({ campaign: stat(1, 1, 3000), brand: stat(1, 1, 3000), fleet: stat(1, 1, 3400) });
+    expect(d).toMatchObject({ source: "campaign", pairs: 3000, thinSample: false });
+    expect(d.blend.map((l) => [l.level, l.pairs])).toEqual([["default", 0], ["fleet", 400], ["campaign", 3000]]); // the brand IS the campaign
+    expect(d.medianHours).toBeCloseTo(48, 0);
+    const thin = chooseDelay({ campaign: stat(1, 1, 3), brand: stat(1, 1, 15), fleet: stat(1, 1, 415) });
+    expect(thin).toMatchObject({ source: "brand", pairs: 15, thinSample: false }); // 12 pairs of its own weigh just over half
+    expect(thin.blend.map((l) => [l.level, l.pairs])).toEqual([["default", 0], ["fleet", 400], ["brand", 12], ["campaign", 3]]);
+    expect(thin.blend.reduce((a, l) => a + l.share, 0)).toBeCloseTo(1, 12);
   });
 });
 
@@ -180,10 +231,18 @@ describe("campaignForecastOf (hypotheses named, alternative budgets)", () => {
     expect(ab).toMatchObject({ fromStep: "a", toStep: "b", fromOutcomeKey: "k_a", toOutcomeKey: "k_b" });
     expect(ab!.yield.source).toBe("campaign");
     expect(ab!.delay).toMatchObject({ source: "campaign", pairs: 2700, thinSample: false });
-    expect(bc!.yield.source).toBe("campaign"); // 2,700 from-Units outweigh the prior's 500
-    expect(bc!.delay).toMatchObject({ source: "fleet", pairs: 150 }); // 2 pairs is thin: the fleet's curve
-    expect(cd!.yield).toMatchObject({ source: "fleet", thinnerScopes: [] }); // the campaign never paired c -> d
-    expect(cd!.delay).toMatchObject({ source: "fleet", pairs: 3, thinSample: true });
+    // THIN-SAMPLE-BLEND-1118: 2 cases of its own barely move what the rest of the fleet measured (148 cases).
+    expect(bc!.yield).toMatchObject({ source: "fleet", thinnerScopes: ["campaign", "brand"], pseudoCases: 10 });
+    expect(bc!.yield.blend.map((l) => l.level)).toEqual(["plan", "fleet", "campaign"]);
+    expect(bc!.yield.blend[2]!.blendedRate).toBe(bc!.yield.unitsPerUnit); // the last level's blended rate IS the rate used
+    expect(bc!.delay).toMatchObject({ source: "fleet", pairs: 150 }); // 2 pairs is thin: the fleet's curve weighs most
+    // 3 cases fleet-wide against a plan line: the plan line still weighs most, and the blend says how much each weighs.
+    expect(cd!.yield).toMatchObject({ source: "plan", thinnerScopes: [] });
+    expect(cd!.yield.blend.map((l) => [l.level, l.cases])).toEqual([["plan", null], ["fleet", 3]]);
+    expect(cd!.yield.unitsPerUnit).toBeGreaterThan(3 / 160);
+    expect(cd!.yield.unitsPerUnit).toBeLessThan(0.05);
+    expect(cd!.delay).toMatchObject({ source: "default", pairs: 0, thinSample: false });
+    expect(cd!.delay.blend.map((l) => [l.level, l.pairs])).toEqual([["default", 0], ["fleet", 3]]);
     expect(body.hypotheses.targetValue).toEqual({ usd: 75000, source: "plan_target_value" });
   });
 
