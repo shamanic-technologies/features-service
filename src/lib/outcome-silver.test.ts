@@ -16,6 +16,8 @@ import {
   gammaQuantile,
   rateEstimateOf,
   FLEET_SCOPE_ID,
+  ENTRY_COST_FROM_KEY,
+  type EntryCostStat,
   type PairBinRow,
   type SilverStatRow,
   type TransitionStat,
@@ -246,6 +248,52 @@ describe("buildSilverStats (the three distributions at the three scopes)", () =>
     const many = Array.from({ length: 201 }, () => 25);
     expect(build(row("u1", many)).medianHours).toBe(30); // 201 pairs: the middle of the bin [24 h, 36 h)
     expect(build(row("u1", many.slice(0, 200))).medianHours).toBe(25); // 200 pairs: the pairs' own
+  });
+});
+
+describe("FORECAST-ENTRY-COST-BASIS-1118: what campaigns spend ALL IN per Unit of their first milestone", () => {
+  // F1 (brand B1): finds leads (u1) and sends (u2); F2 (B1) and F3 (B2) only write and send. Made-up outcome names.
+  const funnelOf = (c: string) => ({ u1: "F1", u2: "F1", u3: "F2", u4: "F3" })[c] ?? null;
+  const rank: Record<string, number | null> = { found: 1, written: null, sent: 2, replied: 3 };
+  const rows = buildSilverStats({
+    today: "2026-03-01",
+    funnelOf,
+    rankOf: (k) => rank[k] ?? null,
+    unitDays: [
+      { outcomeKey: "found", campaignIds: ["u1"], brandId: "B1", day: "2026-01-01", units: 100 },
+      { outcomeKey: "sent", campaignIds: ["u2"], brandId: "B1", day: "2026-01-02", units: 90 },
+      { outcomeKey: "written", campaignIds: ["u3"], brandId: "B1", day: "2026-01-02", units: 40 },
+      { outcomeKey: "sent", campaignIds: ["u3"], brandId: "B1", day: "2026-01-02", units: 40 },
+      { outcomeKey: "written", campaignIds: ["u4"], brandId: "B2", day: "2026-01-02", units: 10 },
+      { outcomeKey: "sent", campaignIds: ["u4"], brandId: "B2", day: "2026-01-02", units: 10 },
+      { outcomeKey: "written", campaignIds: ["legacy"], brandId: "B1", day: "2026-01-02", units: 500 }, // in no sales funnel campaign
+    ],
+    unitCosts: [
+      { outcomeKey: "found", campaignIds: ["u1"], brandId: "B1", costNetCents: 20, units: 100, sumNetCents: 2000, sumGrossCents: 2000 },
+      { outcomeKey: "sent", campaignIds: ["u2"], brandId: "B1", costNetCents: 10, units: 90, sumNetCents: 900, sumGrossCents: 900 },
+      { outcomeKey: "written", campaignIds: ["u3"], brandId: "B1", costNetCents: 7, units: 40, sumNetCents: 296, sumGrossCents: 296 },
+      { outcomeKey: "sent", campaignIds: ["u3"], brandId: "B1", costNetCents: 0.1, units: 40, sumNetCents: 4, sumGrossCents: 4 },
+      { outcomeKey: "written", campaignIds: ["u4"], brandId: "B2", costNetCents: 10, units: 10, sumNetCents: 100, sumGrossCents: 100 },
+      { outcomeKey: "written", campaignIds: ["legacy"], brandId: "B1", costNetCents: 9, units: 500, sumNetCents: 4500, sumGrossCents: 4500 },
+    ],
+    pairBins: [],
+    linkedTo: [],
+  });
+  const entry = (scope: string, id: string, key: string) => (rows.find((r) => r.scope === scope && r.scopeId === id && r.fromKey === ENTRY_COST_FROM_KEY && r.toKey === key)?.body as { stat: EntryCostStat } | undefined)?.stat;
+  it("a campaign's first milestone is the lowest-rung outcome it makes; its cost is EVERYTHING it spent over those Units", () => {
+    expect(entry("campaign", "F1", "found")).toEqual({ campaigns: 1, units: 100, spendUsd: 29 }); // finding and sending, per lead found
+    // F2 makes written (on no rung) and sent: its first milestone is sent, at $3.00 / 40 = $0.075 all in (a send alone: $0.001).
+    expect(entry("campaign", "F2", "sent")).toEqual({ campaigns: 1, units: 40, spendUsd: 3 });
+    expect(entry("campaign", "F2", "written")).toBeUndefined();
+    expect(entry("campaign", "F1", "sent")).toBeUndefined(); // sent is not F1's first milestone
+  });
+  it("a brand and the fleet pool the campaigns sharing a first milestone; a campaign in no sales funnel campaign is in none", () => {
+    expect(entry("brand", "B1", "sent")).toEqual({ campaigns: 1, units: 40, spendUsd: 3 });
+    expect(entry("brand", "B1", "found")).toEqual({ campaigns: 1, units: 100, spendUsd: 29 });
+    expect(entry("fleet", FLEET_SCOPE_ID, "sent")).toEqual({ campaigns: 2, units: 50, spendUsd: 4 });
+    expect(rows.filter((r) => r.fromKey === ENTRY_COST_FROM_KEY && r.scope === "fleet").map((r) => r.toKey).sort()).toEqual(["found", "sent"]);
+    // Without the rung catalogue no such row is built.
+    expect(buildSilverStats({ today: "2026-03-01", funnelOf, unitDays: [], unitCosts: [], pairBins: [], linkedTo: [] }).filter((r) => r.fromKey === ENTRY_COST_FROM_KEY)).toEqual([]);
   });
 });
 

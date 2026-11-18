@@ -10518,6 +10518,9 @@ registry.registerPath({
             unitsHeld: z.number().describe("Produced Units in our copy of the ledger (fleet)."),
             unitCosts: z.array(z.object({ outcomeKey: z.string(), units: z.number(), costUsd: OutcomeDistributionSchema.describe("Production cost per Unit as the ledger states it, USD, net basis (what the org pays)."), meanGrossCostUsd: z.number() })),
             transitions: z.array(OutcomeTransitionStatSchema),
+            entryCosts: z
+              .array(z.object({ outcomeKey: z.string().describe("The first-milestone outcome: the one a campaign makes that stands lowest on the lifecycle ladder."), campaigns: z.number().describe("Sales funnel campaigns pooled."), units: z.number().describe("Their Units of that first milestone."), spendUsd: z.number().describe("Everything they spent: the ledger's stated cost of every Unit they carry, net, USD."), usdPerUnit: z.number().nullable().describe("spendUsd / units: the ALL-IN cost of one Unit of the first milestone (never the ledger cost of the Unit alone).") }))
+              .describe("FORECAST-ENTRY-COST-BASIS-1118. What sales funnel campaigns spend all in to get one Unit of their first milestone, at this scope (a campaign's own row; a brand's or the fleet's campaigns pooled)."),
           }),
         },
       },
@@ -10613,9 +10616,22 @@ registry.registerPath({
                   source: z.enum(["campaign", "brand", "fleet", "plan"]).describe("The level weighing most in the cost used. `campaign` = everything it spent ÷ its Units of the first milestone, from its first Unit; `brand` / `fleet` = the ledger's measured cost of one Unit of that outcome there; `plan` = the plan line's own cost per Unit (its cost per Target ÷ its own Units needed per Target)."),
                   usdPerUnit: z.number().nullable().describe("THE COST USED per Unit of the first milestone: the campaign's own, blended with its fallback by its Units (weight = Units / (Units + 10), on the log scale)."),
                   measuredUsdPerUnit: z.number().nullable().describe("The campaign's own measured cost; null = it made no Unit of the first milestone yet."),
-                  fallbackUsdPerUnit: z.number().nullable().describe("What it falls back on: a cost of ONE such Unit from its own source, never a cost per Target multiplied by yields measured elsewhere (FORECAST-LEAD-DEALS-1118)."),
+                  fallbackUsdPerUnit: z.number().nullable().describe("What it falls back on: the all-in cost of ONE such Unit over the brand's other campaigns, else the fleet's, else the plan line's own; never a cost per Target multiplied by yields measured elsewhere, never the ledger cost of the Unit alone."),
                   fallbackSource: z.enum(["brand", "fleet", "plan"]).nullable(),
                   weight: z.number().nullable().describe("Share of the campaign's own measurement in the cost used."),
+                  levels: z
+                    .array(
+                      z.object({
+                        level: z.enum(["campaign", "brand", "fleet", "plan"]),
+                        basis: z.enum(["all_in_spend_per_first_milestone_unit", "plan_cost_per_target_over_units_needed"]).describe("`all_in_spend_per_first_milestone_unit` = everything spent / Units of the first milestone (the campaign's own; the brand's or the fleet's OTHER sales funnel campaigns with this first milestone, pooled). `plan_cost_per_target_over_units_needed` = the plan line's own."),
+                        usdPerUnit: z.number().nullable(),
+                        units: z.number().nullable().describe("Units of the first milestone it is measured on (null on the plan line)."),
+                        campaigns: z.number().nullable(),
+                        weight: z.number().nullable().describe("Its share in the cost used (the campaign's Units / (Units + 10); the rest to the finest level below that could be measured)."),
+                        skippedReason: z.string().nullable().describe("Why it weighs nothing: `no_unit_of_the_first_milestone_yet`, `no_sales_funnel_campaign_with_this_first_milestone`, `no_other_sales_funnel_campaign_with_this_first_milestone`, `under_30_units_of_other_campaigns`, `no_spend_measured_on_other_campaigns`, `plan_prices_no_target`, `plan_states_no_units_needed_per_target`, or `finer_level_used`."),
+                      }),
+                    )
+                    .describe("FORECAST-ENTRY-COST-BASIS-1118. The ladder the cost rests on, every measured level on the SAME all-in basis: campaign, brand, fleet, plan line. A level that cannot be measured all in is skipped with its reason, never replaced by the ledger cost of the Unit alone."),
                   p10: z.number().nullable(),
                   p90: z.number().nullable(),
                   spentUsd: z.number().nullable(),

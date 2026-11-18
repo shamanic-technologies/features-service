@@ -36,6 +36,7 @@ describe("GET /internal/outcome-distributions (Silver, staff)", () => {
       unitsHeld: 880000,
       unitCosts: [{ outcomeKey: "alpha", units: 3, costUsd: dist, meanGrossCostUsd: 2 }],
       transitions: [{ fromKey: "alpha", toKey: "beta", fromUnits: 3, toUnits: 1, foreignToUnits: 0, linkedToUnits: 1, linkCoverage: 1, exposure: 2.5, censoredBy: "fleet", yield: estimate, prior: { shape: 0.5, rate: 5 }, delay: null }],
+      entryCosts: [],
     });
   });
 

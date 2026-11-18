@@ -292,7 +292,7 @@ describe("chooseEntryCost (FORECAST-LEAD-DEALS-1118: a cost of ONE Unit from its
   });
 });
 
-describe("the entry cost's fallback ladder: brand measured > fleet measured > the plan line's OWN cost per Unit (FORECAST-LEAD-DEALS-1118)", () => {
+describe("the entry cost's ladder: every level ALL IN (FORECAST-ENTRY-COST-BASIS-1118)", () => {
   const base = (over: Partial<CampaignForecastInput>): CampaignForecastInput => ({
     now: "2026-06-01T00:00:00.000Z",
     salesFunnelCampaignId: "deals",
@@ -312,26 +312,56 @@ describe("the entry cost's fallback ladder: brand measured > fleet measured > th
     silverComputedAt: "2026-05-31T18:00:00.000Z",
     ...over,
   });
-  it("the prod case: the campaign's own $0.075 a message, a Target far away; never 59,000 messages bought for $0.50", () => {
-    const body = campaignForecastOf(base({ unitCost: (scope, key) => (scope === "fleet" && key === "k_sent" ? { units: 290000, meanUsd: 0.04 } : null) }));
-    expect(body.hypotheses.entryCost).toMatchObject({ source: "campaign", measuredUsdPerUnit: 0.0753, fallbackSource: "fleet", fallbackUsdPerUnit: 0.04 });
-    expect(body.hypotheses.entryCost!.usdPerUnit!).toBeGreaterThan(0.04);
-    const sent = body.forecast!.outcomes[0]!;
-    expect(sent.cumulativeUnits.expected[29]! - sent.unitsToDate).toBeLessThan(15); // $0.49 in 30 days buys a handful of messages
-    expect(body.forecast!.nextTarget.expectedOneByDate).toBeNull();
-    expect(body.forecast!.nextTarget.shareWithinSearch).toBeLessThan(0.2);
+  // Silver: this campaign's own stored row (20 messages, $1.50), its brand's campaigns pooled (it and one other: 60
+  // messages, $4.50), the fleet's (400 messages, $36).
+  const pools: Record<string, { campaigns: number; units: number; spendUsd: number }> = { campaign: { campaigns: 1, units: 20, spendUsd: 1.5 }, brand: { campaigns: 2, units: 60, spendUsd: 4.5 }, fleet: { campaigns: 9, units: 400, spendUsd: 36 } };
+  const entryCost: CampaignForecastInput["entryCost"] = (scope, key) => (key === "k_sent" ? pools[scope]! : null);
+  const levelsOf = (body: ReturnType<typeof campaignForecastOf>) => Object.fromEntries(body.hypotheses.entryCost!.levels.map((l) => [l.level, l]));
+
+  it("Lead Deals' shape: its own $0.075 at 27 Units is blended with what OTHER campaigns spent all in, never pulled under a send-only figure", () => {
+    const body = campaignForecastOf(base({ entryCost }));
+    const cost = body.hypotheses.entryCost!;
+    const l = levelsOf(body);
+    // The brand WITHOUT this campaign: 40 messages for $3.00 = $0.075 all in.
+    expect(l.brand).toMatchObject({ basis: "all_in_spend_per_first_milestone_unit", usdPerUnit: 0.075, units: 40, campaigns: 1, skippedReason: null });
+    expect(l.campaign).toMatchObject({ basis: "all_in_spend_per_first_milestone_unit", usdPerUnit: 0.0753, units: 27, campaigns: 1, skippedReason: null });
+    expect(l.campaign!.weight).toBeCloseTo(27 / 37, 4);
+    expect(l.brand!.weight).toBeCloseTo(10 / 37, 4);
+    // The fleet could be measured too, but the brand is finer; the plan line states no Units needed per Target.
+    expect(l.fleet).toMatchObject({ units: 380, campaigns: 8, weight: 0, skippedReason: "finer_level_used" });
+    expect(l.fleet!.usdPerUnit!).toBeCloseTo((36 - 1.5) / 380, 6);
+    expect(l.plan).toMatchObject({ basis: "plan_cost_per_target_over_units_needed", usdPerUnit: null, weight: 0, skippedReason: "plan_states_no_units_needed_per_target" });
+    expect(cost).toMatchObject({ source: "campaign", fallbackSource: "brand" });
+    expect(cost.usdPerUnit!).toBeGreaterThan(0.07); // a send costs $0.001 in the ledger: the cost used never goes near it
+    expect(cost.usdPerUnit!).toBeLessThan(0.08);
+    expect(body.forecast!.nextTarget.expectedOneByDate).toBeNull(); // $0.49 in 30 days buys a handful of messages
   });
-  it("brand measured (at least 30 Units) before fleet measured before the plan line's own; the plan's cost per Target is never multiplied by yields measured elsewhere", () => {
-    const fallbackOf = (unitCost: CampaignForecastInput["unitCost"], over: Partial<CampaignForecastInput> = {}) => campaignForecastOf(base({ unitCost, milestones: base({}).milestones.map((m) => ({ ...m, unitsByDay: [] })), spendByDay: [], ...over })).hypotheses.entryCost;
-    const both: CampaignForecastInput["unitCost"] = (scope) => (scope === "brand" ? { units: 40, meanUsd: 0.09 } : { units: 290000, meanUsd: 0.04 });
-    expect(fallbackOf(both)).toMatchObject({ source: "brand", usdPerUnit: 0.09 });
-    expect(fallbackOf((scope) => (scope === "brand" ? { units: 12, meanUsd: 0.09 } : { units: 290000, meanUsd: 0.04 }))).toMatchObject({ source: "fleet", usdPerUnit: 0.04 });
-    // Nothing measured anywhere and the plan states no Units needed per Target: no cost, said (never $0.12 x 0.00005).
-    const none = campaignForecastOf(base({ unitCost: () => null, milestones: base({}).milestones.map((m) => ({ ...m, unitsByDay: [] })), spendByDay: [] }));
-    expect(none).toMatchObject({ unavailableReason: "cost_unmeasured_and_plan_prices_no_target", forecast: null });
-    // The plan line's OWN cost per Unit: its cost per Target over its own Units needed per Target.
-    const planOwn = fallbackOf(() => null, { milestones: [{ step: "sent", label: "Sent", ledgerKeys: ["k_sent"], unitsByDay: [], neededPerTarget: 4 }, { step: "paid", label: "Paid", ledgerKeys: ["k_paid"], unitsByDay: [], neededPerTarget: 1 }] });
-    expect(planOwn).toMatchObject({ source: "plan", usdPerUnit: 0.03, planBasis: "default" });
+
+  it("a level that cannot be measured all in is skipped with its reason: under 30 Units of other campaigns, no other campaign, none with this first milestone", () => {
+    const thinBrand = levelsOf(campaignForecastOf(base({ entryCost: (scope, key) => (key !== "k_sent" ? null : scope === "brand" ? { campaigns: 2, units: 45, spendUsd: 3 } : pools[scope]!) })));
+    expect(thinBrand.brand).toMatchObject({ usdPerUnit: null, weight: 0, skippedReason: "under_30_units_of_other_campaigns" }); // 45 - its own 20
+    expect(thinBrand.fleet).toMatchObject({ skippedReason: null });
+    expect(thinBrand.fleet!.weight).toBeCloseTo(10 / 37, 4);
+    const alone = levelsOf(campaignForecastOf(base({ entryCost: (scope, key) => (key === "k_sent" ? pools.campaign! : null) })));
+    expect(alone.brand!.skippedReason).toBe("no_other_sales_funnel_campaign_with_this_first_milestone");
+    expect(alone.fleet!.skippedReason).toBe("no_other_sales_funnel_campaign_with_this_first_milestone");
+    // Nothing below: the campaign's own cost alone.
+    const none = campaignForecastOf(base({ entryCost: () => null }));
+    expect(levelsOf(none).brand!.skippedReason).toBe("no_sales_funnel_campaign_with_this_first_milestone");
+    expect(none.hypotheses.entryCost).toMatchObject({ source: "campaign", usdPerUnit: 0.0753, weight: 1, fallbackSource: null });
+  });
+
+  it("no Unit yet: the finest level measured all in, named; then the plan line's OWN cost per Unit; nothing = no cost, said", () => {
+    const empty = { milestones: base({}).milestones.map((m) => ({ ...m, unitsByDay: [] })), spendByDay: [] };
+    const fresh = campaignForecastOf(base({ ...empty, entryCost: (scope, key) => (key === "k_sent" && scope !== "campaign" ? pools[scope]! : null) }));
+    expect(fresh.hypotheses.entryCost).toMatchObject({ source: "brand", usdPerUnit: 0.075, measuredUsdPerUnit: null, weight: 0 });
+    expect(levelsOf(fresh).campaign).toMatchObject({ usdPerUnit: null, skippedReason: "no_unit_of_the_first_milestone_yet" });
+    expect(levelsOf(fresh).brand).toMatchObject({ weight: 1, units: 60, campaigns: 2 });
+    const planOwn = campaignForecastOf(base({ entryCost: () => null, spendByDay: [], milestones: [{ step: "sent", label: "Sent", ledgerKeys: ["k_sent"], unitsByDay: [], neededPerTarget: 4 }, { step: "paid", label: "Paid", ledgerKeys: ["k_paid"], unitsByDay: [], neededPerTarget: 1 }] }));
+    expect(planOwn.hypotheses.entryCost).toMatchObject({ source: "plan", usdPerUnit: 0.03, planBasis: "default" });
+    expect(levelsOf(planOwn).plan).toMatchObject({ usdPerUnit: 0.03, weight: 1, skippedReason: null });
+    // The plan's cost per Target is never multiplied by yields measured elsewhere ($0.12 x 0.00005).
+    expect(campaignForecastOf(base({ ...empty, entryCost: () => null }))).toMatchObject({ unavailableReason: "cost_unmeasured_and_plan_prices_no_target", forecast: null });
   });
 });
 
