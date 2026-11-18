@@ -25,7 +25,7 @@ vi.mock("../middleware/auth.js", () => ({
   },
 }));
 
-import router, { forecastCountsAsZero } from "./outcome-forecast.js";
+import router from "./outcome-forecast.js";
 import { openApiDocument } from "../lib/openapi.js";
 import { rateEstimateOf } from "../lib/outcome-silver.js";
 
@@ -114,9 +114,11 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
     expect(readSilverStats).not.toHaveBeenCalled();
     expect(res.body.silverComputedAt).toBeNull();
     // The plan line's rate, blended with the campaign's own counts (THIN-SAMPLE-BLEND-1118): the ladder names both.
-    for (const t of res.body.hypotheses.transitions as Array<{ yield: { source: string; blend: Array<{ level: string }> }; delay: { source: string } }>) {
+    for (const t of res.body.hypotheses.transitions as Array<{ yield: { source: string; campaignEvidence: string | null; blend: Array<{ level: string }> }; delay: { source: string } }>) {
+      expect([null, "live_counts"]).toContain(t.yield.campaignEvidence);
       expect(t.yield.blend[0]!.level).toBe("plan");
-      expect(t.yield.blend.map((l) => l.level).filter((l) => !["plan", "default"].includes(l))).toEqual([]);
+      // The campaign's own level is its page's live counts (FORECAST-FRESH-EVIDENCE-1118), never a stored row.
+      expect(t.yield.blend.map((l) => l.level).filter((l) => !["plan", "campaign"].includes(l))).toEqual([]);
       expect(t.delay.source).toBe("default");
     }
     expect(res.body.forecast).not.toBeNull();
@@ -140,33 +142,29 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
   });
 
   // FORECAST-NO-TARGET-YET-1118 (prod 2026-11-18, « Email Replies »: no paid client yet, the client's own team makes that
-  // step so the campaign spends nothing on it: « The forecast is not available yet »).
+  // step so the campaign spends nothing on it: « The forecast is not available yet »). Its card reads a measured 0 since
+  // FORECAST-FRESH-EVIDENCE-1118.
   it("a Target the ledger has simply not seen yet holds ZERO Units and is projected: the forecast is served", async () => {
     const b = await basis();
-    b.row.milestones[3] = { ...card("t_c", "C", true, null), countUnavailableReason: "no_unit_makes_it" };
+    b.row.milestones[3] = { ...card("t_c", "C", true, 0), count: 0, past: [] };
     basis.mockResolvedValue(b);
     const res = await request(app).get(URL);
     expect(res.body.unavailableReason).toBeNull();
-    expect(res.body.forecast).not.toBeNull();
     const outcomes = res.body.forecast.outcomes as Array<{ step: string; isTarget: boolean; unitsToDate: number }>;
     expect(outcomes.map((o) => o.step)).toEqual(["t_a", "t_b", "t_c"]);
     expect(outcomes[2]).toMatchObject({ isTarget: true, unitsToDate: 0 });
     expect(res.body.forecast.nextTarget.expectedOneByDate).not.toBeNull();
-    // Still listed as uncounted only what is left OUT of the projection (the undeclared middle step), never the zero Target.
     expect(res.body.uncountedMilestones).toEqual([{ step: "t_x", label: "X", reason: "outcome_not_declared_in_ledger" }]);
-    expect(forecastCountsAsZero("no_unit_makes_it")).toBe(true);
-    for (const r of ["ledger_unreadable", "outcome_not_declared_in_ledger", "no_producer_declares_outcome", "not_counted_for_this_campaign"]) expect(forecastCountsAsZero(r)).toBe(false);
-    expect(forecastCountsAsZero(null)).toBe(false);
   });
 
-  it("a MIDDLE milestone not seen yet with no rate measured or planned around it: the chain goes on without it, and it is listed", async () => {
+  it("a MIDDLE milestone at zero with no rate measured or planned around it: the chain goes on without it, and it is listed with why", async () => {
     const b = await basis();
-    b.row.milestones[1] = { ...card("t_x", "X", false, null), countUnavailableReason: "no_unit_makes_it" };
+    b.row.milestones[1] = { ...card("t_x", "X", false, 0), count: 0, past: [] };
     basis.mockResolvedValue(b);
     const res = await request(app).get(URL);
     expect(res.body.unavailableReason).toBeNull();
     expect(res.body.forecast.outcomes.map((o: { step: string }) => o.step)).toEqual(["t_a", "t_b", "t_c"]);
-    expect(res.body.uncountedMilestones).toEqual([{ step: "t_x", label: "X", reason: "no_unit_makes_it" }]);
+    expect(res.body.uncountedMilestones).toEqual([{ step: "t_x", label: "X", reason: "zero_units_and_no_rate_around_it" }]);
   });
 
   it("404 on a campaign that is not the brand's; 400 on an unknown pricing", async () => {
