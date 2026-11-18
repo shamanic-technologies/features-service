@@ -82677,7 +82677,7 @@
                     "unavailableReason": {
                       "type": "string",
                       "nullable": true,
-                      "description": "Why there is no forecast: `campaign_states_no_target`, `target_not_counted_in_ledger`, `no_unit_reaches_a_step`, `yield_unmeasured:<from>-><to>`, `cost_unmeasured_and_plan_prices_no_target`; null = served."
+                      "description": "Why there is no forecast (the CLOSED list): `campaign_states_no_target` (the campaign names no Target); `target_ledger_unreadable` (the ledger could not be read now, it clears by itself); `target_outcome_not_declared_in_ledger` (the brand's runs consumed the Target outcome and no run declared producing it); `target_no_producer_declares_outcome` (no run of the fleet ever declared the Target outcome); `target_not_counted_in_ledger` (the Target's card states another reason); `no_unit_reaches_a_step` (no milestone can be counted); `yield_unmeasured:<fromStep>-><toStep>` (a transition nothing measured and the plan line states no rate for); `cost_unmeasured_and_plan_prices_no_target` (under 30 Units of the first milestone and the plan line prices no Target). null = served. A Target the ledger has simply not SEEN yet (`no_unit_makes_it` on its card) is NOT a refusal: it holds zero Units and is projected (FORECAST-NO-TARGET-YET-1118)."
                     },
                     "uncountedMilestones": {
                       "type": "array",
