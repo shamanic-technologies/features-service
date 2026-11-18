@@ -82911,6 +82911,17 @@
                                     "type": "number",
                                     "description": "The fixed strength of a fallback, in cases (10): a level's own measurement weighs cases-it-could-expect / (those + 10) against the level below. 3 cases barely move it, 10 weigh half, 100 weigh 91%."
                                   },
+                                  "campaignEvidence": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "enum": [
+                                      "silver",
+                                      "live_counts",
+                                      "own_counts",
+                                      null
+                                    ],
+                                    "description": "Where the campaign level's cases come from: `silver` = the stored daily sweep; `live_counts` = the campaign page's own counts now, censored by the delay curve (Silver holds no row for this campaign on this transition yet: a campaign counts from day one, FORECAST-FRESH-EVIDENCE-1118); `own_counts` = the same counts uncensored (nothing measured anywhere); null = the campaign holds no evidence."
+                                  },
                                   "effectiveCases": {
                                     "type": "number",
                                     "nullable": true,
@@ -83048,6 +83059,7 @@
                                   "p90",
                                   "thinnerScopes",
                                   "pseudoCases",
+                                  "campaignEvidence",
                                   "effectiveCases",
                                   "planLineSpreadCases",
                                   "blend",

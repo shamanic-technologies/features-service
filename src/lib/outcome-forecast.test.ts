@@ -72,6 +72,29 @@ describe("chooseYield: each level blended into the one below by its own cases (T
   });
 });
 
+describe("FORECAST-FRESH-EVIDENCE-1118: a campaign's own cases count from day one", () => {
+  it("Silver holds no row for the campaign yet: its page's live counts are its level, and nothing is taken from the fleet's", () => {
+    // Prod 2026-11-18: 106 leads found, 79 messages sent, no Silver row; the fleet says 2.25 messages per lead found.
+    const fleet = stat(18800, 42400, 40000);
+    const without = chooseYield({ campaign: null, brand: null, fleet }, 0.8, { fromUnits: 106, toUnits: 79 })!;
+    expect(without.source).toBe("fleet");
+    expect(without.shape / without.rate).toBeGreaterThan(2.2);
+    expect(without.campaignEvidence).toBeNull();
+    const withLive = chooseYield({ campaign: null, brand: null, fleet }, 0.8, { fromUnits: 106, toUnits: 79 }, { toUnits: 79, exposure: 100 })!;
+    expect(withLive).toMatchObject({ source: "campaign", campaignEvidence: "live_counts", thinnerScopes: [] });
+    expect(withLive.blend.map((l) => [l.level, l.cases, l.exposure])).toEqual([["plan", null, null], ["fleet", 42400, 18800], ["campaign", 79, 100]]);
+    expect(withLive.shape / withLive.rate).toBeGreaterThan(0.79);
+    expect(withLive.shape / withLive.rate).toBeLessThan(0.9); // its own 0.79, pulled a little by the fleet's 2.25 (79 cases against 10)
+    // A stored row wins over the live counts (it holds what the links say: Units made from another campaign left out).
+    const stored = chooseYield({ campaign: stat(113, 106), brand: null, fleet }, 0.8, { fromUnits: 113, toUnits: 1087 }, { toUnits: 1087, exposure: 113 })!;
+    expect(stored.campaignEvidence).toBe("silver");
+    expect(stored.blend[2]).toMatchObject({ level: "campaign", cases: 106, exposure: 113 });
+    expect(stored.blend[1]).toMatchObject({ level: "fleet", cases: 42294, exposure: 18687 }); // the fleet without the stored campaign
+    // No exposure yet (nothing due): the campaign holds no evidence.
+    expect(chooseYield({ campaign: null, brand: null, fleet }, 0.8, { fromUnits: 0, toUnits: 0 }, { toUnits: 0, exposure: 0 })!.campaignEvidence).toBeNull();
+  });
+});
+
 describe("FORECAST-TUNNEL-1118: a guess does not narrow the range; a rate is drawn by the cases it is known by", () => {
   const none = { campaign: null, brand: null, fleet: null };
   const range = (y: { shape: number; rate: number }) => gammaQuantile(0.9, y.shape, y.rate) / gammaQuantile(0.1, y.shape, y.rate);
@@ -325,8 +348,9 @@ describe("campaignForecastOf (hypotheses named, alternative budgets)", () => {
     expect(bc!.yield.blend[2]!.blendedRate).toBe(bc!.yield.unitsPerUnit); // the last level's blended rate IS the rate used
     expect(bc!.delay).toMatchObject({ source: "fleet", pairs: 150 }); // 2 pairs is thin: the fleet's curve weighs most
     // 3 cases fleet-wide against a plan line: the plan line still weighs most, and the blend says how much each weighs.
-    expect(cd!.yield).toMatchObject({ source: "plan", thinnerScopes: [] });
-    expect(cd!.yield.blend.map((l) => [l.level, l.cases])).toEqual([["plan", null], ["fleet", 3]]);
+    // The campaign's own level is there from its live counts (2 `c` Units, none became `d` yet), weighing little.
+    expect(cd!.yield).toMatchObject({ source: "plan", thinnerScopes: ["campaign"], campaignEvidence: "live_counts" });
+    expect(cd!.yield.blend.map((l) => [l.level, l.cases])).toEqual([["plan", null], ["fleet", 3], ["campaign", 0]]);
     expect(cd!.yield.unitsPerUnit).toBeGreaterThan(3 / 160);
     expect(cd!.yield.unitsPerUnit).toBeLessThan(0.05);
     expect(cd!.delay).toMatchObject({ source: "default", pairs: 0, thinSample: false });

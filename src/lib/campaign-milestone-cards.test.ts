@@ -68,9 +68,16 @@ describe("campaign milestone cards (OUTCOME-RUNG-AND-TARGET-1106 follow-up)", ()
     expect(b[0]!.projection).toMatchObject({ outcomesPerDay: null, unavailableReason: "plan_not_computed_yet" });
   });
 
-  it("a milestone nothing counts: null with a reason; a unit that spent and produced none: a measured 0", () => {
+  it("a milestone the ledger saw none of: a measured 0, spend or not; one it cannot count: null with its reason", () => {
     const none = milestoneCardsOf({ milestones: [{ step: "x", label: "X", lifecycleRung: null, ledgerByDay: new Map(), ledgerUnavailableReason: null, ownSpendUsd: 0, spendUpToUsd: 0, neededPerTarget: null }], targetSchedule: null, targetProjectionUnavailableReason: null, projectionDays: 1, now: NOW });
-    expect(none[0]).toMatchObject({ count: null, countUnavailableReason: "no_unit_makes_it" });
+    // FORECAST-FRESH-EVIDENCE-1118: the ledger read it and saw none = a MEASURED zero, spend or not (the page printed
+    // « 0 of 106 people went on to Paid client » beside a card with no count).
+    expect(none[0]).toMatchObject({ count: 0, countSource: "ledger", countUnavailableReason: null, past: [], pastUnavailableReason: null, costPerUnitUsd: null, costPerUnitUnavailableReason: "no_spend_on_this_milestone" });
+    // The three the ledger truly cannot count keep no count, each under its reason.
+    for (const reason of ["ledger_unreadable", "outcome_not_declared_in_ledger", "no_producer_declares_outcome"]) {
+      const [card] = milestoneCardsOf({ milestones: [{ step: "x", label: "X", lifecycleRung: null, ledgerByDay: new Map(), ledgerUnavailableReason: reason, ownSpendUsd: 0, spendUpToUsd: 0, neededPerTarget: null }], targetSchedule: null, targetProjectionUnavailableReason: null, projectionDays: 1, now: NOW });
+      expect(card).toMatchObject({ count: null, countSource: null, countUnavailableReason: reason });
+    }
     const zero = milestoneCardsOf({ milestones: [{ step: "x", label: "X", lifecycleRung: null, ledgerByDay: new Map(), ledgerUnavailableReason: null, ownSpendUsd: 3, spendUpToUsd: 3, neededPerTarget: null }], targetSchedule: null, targetProjectionUnavailableReason: null, projectionDays: 1, now: NOW });
     expect(zero[0]).toMatchObject({ count: 0, countSource: "ledger", costPerUnitUnavailableReason: "no_unit_yet" });
   });

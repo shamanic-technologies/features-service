@@ -186,8 +186,11 @@ export function milestoneCardsOf(input: {
     const ledgerTotal = [...m.ledgerByDay.values()].reduce((a, n) => a + n, 0);
     if (ledgerTotal > 0) return { count: ledgerTotal, source: "ledger" as const, series: cumulativeFromDaily(m.ledgerByDay, today), reason: null };
     if (m.ledgerUnavailableReason !== null) return { count: null, source: null, series: null, reason: m.ledgerUnavailableReason };
-    // A milestone the ledger saw nothing of and the campaign does not count: measured zero only when a unit makes it.
-    return m.ownSpendUsd !== null && m.ownSpendUsd > 0 ? { count: 0, source: "ledger" as const, series: [], reason: null } : { count: null, source: null, series: null, reason: "no_unit_makes_it" };
+    // The ledger is readable, a producer declares this outcome, and it saw none on this campaign: a MEASURED zero, whether
+    // or not the campaign spends on a unit making it (FORECAST-FRESH-EVIDENCE-1118: a late Unit declared on a run naming no
+    // campaign is credited through the ledger's links, so a step the client's own team makes is counted too; the card read
+    // no count beside « 0 of 106 people went on to Paid client » on the same page).
+    return { count: 0, source: "ledger" as const, series: [], reason: null };
   });
   return input.milestones.map((m, i) => {
     const c = counted[i]!;
