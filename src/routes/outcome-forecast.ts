@@ -17,8 +17,8 @@ import { fetchSalesFunnelCampaigns, type SalesFunnelCampaignRow } from "../lib/s
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
 import { campaignTargetBasis } from "./campaign-targets.js";
-import { readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-io.js";
-import { FLEET_SCOPE_ID, SILVER_RULE, type TransitionStat } from "../lib/outcome-silver.js";
+import { readCampaignPairBins, readCurrentSilverSweep, readSilverStats } from "../lib/outcome-silver-io.js";
+import { delayDistributionOf, FLEET_SCOPE_ID, SILVER_RULE, type DelayDistribution, type TransitionStat } from "../lib/outcome-silver.js";
 import { campaignForecastOf, FORECAST_RULE } from "../lib/outcome-forecast.js";
 
 /**
@@ -61,6 +61,23 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
   const projected = (m: { count: number | null }) => m.count !== null;
   const target = basis.row.milestones.find((m) => m.isTarget) ?? null;
   const targetCounted = target !== null && projected(target);
+  // FORECAST-FRESH-EVIDENCE-1118: for each transition between two neighbouring milestones that Silver holds no campaign
+  // row for (a campaign younger than the last sweep), the delay the campaign measured ITSELF, read live off the links
+  // (its own Units only; nothing swept). Unreadable = none: the brand's or the fleet's curve censors, logged.
+  const liveDelays = new Map<string, DelayDistribution | null>();
+  const counted = basis.row.milestones.filter(projected);
+  const unitCampaignIds = row.units.map((u) => u.campaignId);
+  if (silverComputedAt !== null)
+    for (let k = 0; k + 1 < counted.length; k++)
+      for (const a of needed.get(counted[k]!.step)?.ledgerKeys ?? [])
+        for (const b of needed.get(counted[k + 1]!.step)?.ledgerKeys ?? []) {
+          if (stats.has(`campaign\u0000${a}\u0000${b}`) || !stats.has(`fleet\u0000${a}\u0000${b}`)) continue;
+          const pairs = await readCampaignPairBins(unitCampaignIds, a, b).catch((err: Error) => {
+            console.error(`[features-service] outcome forecast: live pairs of ${row.id} ${a} -> ${b} unreadable (another scope's curve censors): ${err.message}`);
+            return null;
+          });
+          liveDelays.set(`${a}\u0000${b}`, pairs ? delayDistributionOf(pairs.bins, pairs.sumHours, pairs.samplesHours) : null);
+        }
   const forecastOver = (chain: typeof basis.row.milestones) =>
     campaignForecastOf({
       now,
@@ -74,6 +91,7 @@ export async function computeOutcomeForecast(brandId: string, row: SalesFunnelCa
       plan: { costPerTargetUsd: basis.row.projection.costPerTargetUsd, basis: basis.row.projection.costPerTargetBasis },
       targetValueUsd: basis.input.targetValueUsd,
       transition: (scope, x, y) => stats.get(`${scope}\u0000${x}\u0000${y}`) ?? null,
+      liveCampaignDelay: (x, y) => liveDelays.get(`${x}\u0000${y}`) ?? null,
       silverComputedAt,
     });
   // A milestone the ledger cannot count holds no Units to project from: the chain keeps the others.

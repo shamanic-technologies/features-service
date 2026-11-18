@@ -15,7 +15,8 @@ const basis = vi.fn();
 vi.mock("./campaign-targets.js", () => ({ campaignTargetBasis: (...a: unknown[]) => basis(...a) }));
 const readSilverStats = vi.fn();
 const readSilverSweepRecord = vi.fn();
-vi.mock("../lib/outcome-silver-io.js", () => ({ readSilverStats: (...a: unknown[]) => readSilverStats(...a), readCurrentSilverSweep: () => readSilverSweepRecord() }));
+const readCampaignPairBins = vi.fn(async () => ({ bins: new Map<number, number>(), sumHours: 0, samplesHours: [] as number[] }));
+vi.mock("../lib/outcome-silver-io.js", () => ({ readSilverStats: (...a: unknown[]) => readSilverStats(...a), readCurrentSilverSweep: () => readSilverSweepRecord(), readCampaignPairBins: (...a: unknown[]) => readCampaignPairBins(...(a as [])) }));
 vi.mock("../middleware/auth.js", () => ({
   apiKeyAuth: (req: Record<string, unknown>, _res: unknown, next: () => void) => {
     req.orgId = "org-1";
@@ -88,6 +89,9 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
     expect(res.body.hypotheses.budget).toMatchObject({ source: "daily_budget", spendPerDayWhileSpendingUsd: 10 });
     expect(res.body.hypotheses.entryCost).toMatchObject({ step: "t_a", source: "campaign", usdPerUnit: 0.1 });
     expect(res.body.hypotheses.transitions.map((t: { yield: { source: string }; delay: { source: string } }) => [t.yield.source, t.delay.source])).toEqual([["campaign", "campaign"], ["fleet", "fleet"]]);
+    // FORECAST-FRESH-EVIDENCE-1118: the transition Silver holds no campaign row for reads the campaign's own pairs live,
+    // for its unit campaigns and that pair of outcomes only; the one it holds a row for reads nothing.
+    expect(readCampaignPairBins.mock.calls).toEqual([[["u1", "u2"], "k_b", "k_c"]]);
     // $10 a day at $0.10 = 100 A a day, x 10% = 10 B, x 5% = one Target every 2 days.
     expect(res.body.forecast.nextTarget.medianInDays).toBeLessThan(15);
     expect(res.body.alternatives.map((a: { budgetMultiplier: number }) => a.budgetMultiplier)).toEqual([2, 5, 10]);
