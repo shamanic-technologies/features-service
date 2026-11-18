@@ -25,7 +25,7 @@ vi.mock("../middleware/auth.js", () => ({
   },
 }));
 
-import router from "./outcome-forecast.js";
+import router, { forecastCountsAsZero } from "./outcome-forecast.js";
 import { openApiDocument } from "../lib/openapi.js";
 import { rateEstimateOf } from "../lib/outcome-silver.js";
 
@@ -122,12 +122,51 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/outcome-forecast", () 
     expect(res.body.forecast).not.toBeNull();
   });
 
-  it("a Target the ledger cannot count: no forecast, with the reason", async () => {
+  it("a Target the ledger cannot count: no forecast, under its own named reason", async () => {
+    const reasons: Array<[string, string]> = [
+      ["outcome_not_declared_in_ledger", "target_outcome_not_declared_in_ledger"],
+      ["no_producer_declares_outcome", "target_no_producer_declares_outcome"],
+      ["ledger_unreadable", "target_ledger_unreadable"],
+      ["something_new", "target_not_counted_in_ledger"],
+    ];
+    for (const [cardReason, served] of reasons) {
+      const b = await basis();
+      b.row.milestones[3] = { ...card("t_c", "C", true, null), countUnavailableReason: cardReason };
+      basis.mockResolvedValue(b);
+      const res = await request(app).get(URL);
+      expect([cardReason, res.body.unavailableReason, res.body.forecast]).toEqual([cardReason, served, null]);
+      expect(res.body.uncountedMilestones.map((m: { step: string }) => m.step)).toContain("t_c");
+    }
+  });
+
+  // FORECAST-NO-TARGET-YET-1118 (prod 2026-11-18, « Email Replies »: no paid client yet, the client's own team makes that
+  // step so the campaign spends nothing on it: « The forecast is not available yet »).
+  it("a Target the ledger has simply not seen yet holds ZERO Units and is projected: the forecast is served", async () => {
     const b = await basis();
-    b.row.milestones[3] = card("t_c", "C", true, null);
+    b.row.milestones[3] = { ...card("t_c", "C", true, null), countUnavailableReason: "no_unit_makes_it" };
     basis.mockResolvedValue(b);
     const res = await request(app).get(URL);
-    expect(res.body).toMatchObject({ unavailableReason: "target_not_counted_in_ledger", forecast: null });
+    expect(res.body.unavailableReason).toBeNull();
+    expect(res.body.forecast).not.toBeNull();
+    const outcomes = res.body.forecast.outcomes as Array<{ step: string; isTarget: boolean; unitsToDate: number }>;
+    expect(outcomes.map((o) => o.step)).toEqual(["t_a", "t_b", "t_c"]);
+    expect(outcomes[2]).toMatchObject({ isTarget: true, unitsToDate: 0 });
+    expect(res.body.forecast.nextTarget.expectedOneByDate).not.toBeNull();
+    // Still listed as uncounted only what is left OUT of the projection (the undeclared middle step), never the zero Target.
+    expect(res.body.uncountedMilestones).toEqual([{ step: "t_x", label: "X", reason: "outcome_not_declared_in_ledger" }]);
+    expect(forecastCountsAsZero("no_unit_makes_it")).toBe(true);
+    for (const r of ["ledger_unreadable", "outcome_not_declared_in_ledger", "no_producer_declares_outcome", "not_counted_for_this_campaign"]) expect(forecastCountsAsZero(r)).toBe(false);
+    expect(forecastCountsAsZero(null)).toBe(false);
+  });
+
+  it("a MIDDLE milestone not seen yet with no rate measured or planned around it: the chain goes on without it, and it is listed", async () => {
+    const b = await basis();
+    b.row.milestones[1] = { ...card("t_x", "X", false, null), countUnavailableReason: "no_unit_makes_it" };
+    basis.mockResolvedValue(b);
+    const res = await request(app).get(URL);
+    expect(res.body.unavailableReason).toBeNull();
+    expect(res.body.forecast.outcomes.map((o: { step: string }) => o.step)).toEqual(["t_a", "t_b", "t_c"]);
+    expect(res.body.uncountedMilestones).toEqual([{ step: "t_x", label: "X", reason: "no_unit_makes_it" }]);
   });
 
   it("404 on a campaign that is not the brand's; 400 on an unknown pricing", async () => {
