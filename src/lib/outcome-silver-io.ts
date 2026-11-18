@@ -413,6 +413,38 @@ export function linkSourceOf(text: string): { campaignIds: string[]; brandId: st
   return { campaignIds: campaigns === "" ? [] : campaigns.split(","), brandId: brand === "" ? null : brand };
 }
 
+/**
+ * FORECAST-FRESH-EVIDENCE-1118: the pairs of ONE transition leaving the `from` Units these unit campaigns carry, read
+ * off our copy of the links (followed every 15 min): the delay a campaign younger than the last sweep measured itself.
+ * Same walk and same bins as the sweep's; bounded by the campaign's own Units.
+ */
+export async function readCampaignPairBins(unitCampaignIds: readonly string[], fromKey: string, toKey: string): Promise<{ bins: Map<number, number>; sumHours: number; samplesHours: number[] | null }> {
+  const out = { bins: new Map<number, number>(), sumHours: 0, samplesHours: [] as number[] | null };
+  if (unitCampaignIds.length === 0) return out;
+  const edges = `{${DELAY_EDGES_HOURS.join(",")}}`;
+  const ids = sql.join(unitCampaignIds.map((c) => sql`${c}`), sql`, `);
+  const rows = (await db.execute(sql`
+    WITH RECURSIVE walk AS (
+      SELECT l.from_unit_id AS src, l.to_unit_id AS unit, l.to_key AS k, l.delay_seconds AS delay, 1 AS depth
+      FROM outcome_unit_links l WHERE l.from_key = ${fromKey} AND l.from_campaign_ids && ARRAY[${ids}]::text[]
+      UNION ALL
+      SELECT w.src, l.to_unit_id, l.to_key, w.delay + l.delay_seconds, w.depth + 1
+      FROM walk w JOIN outcome_unit_links l ON l.from_unit_id = w.unit WHERE w.depth < ${MAX_WALK_LINKS}
+    ), pairs AS (
+      SELECT * FROM (SELECT DISTINCT ON (src, unit) k, GREATEST(delay, 0) / 3600.0 AS hours FROM walk ORDER BY src, unit, depth) p WHERE k = ${toKey}
+    )
+    SELECT width_bucket(hours, ${edges}::float8[]) AS bin, count(*)::int AS n, sum(hours)::float8 AS sum_hours,
+           CASE WHEN count(*) <= ${EXACT_DELAY_MAX_PAIRS} THEN array_agg(hours::float8) END AS samples
+    FROM pairs GROUP BY 1`)) as unknown as Array<Record<string, unknown>>;
+  for (const r of rows) {
+    out.bins.set(Number(r.bin), Number(r.n));
+    out.sumHours += Number(r.sum_hours);
+    const s = Array.isArray(r.samples) ? (r.samples as unknown[]).map(Number) : null;
+    if (out.samplesHours !== null) out.samplesHours = s === null || out.samplesHours.length + s.length > EXACT_DELAY_MAX_PAIRS ? null : out.samplesHours.concat(s);
+  }
+  return out;
+}
+
 /** Every outcome a stored link leaves from. */
 export async function readLinkFromKeys(): Promise<string[]> {
   const rows = (await db.execute(sql`SELECT DISTINCT from_key FROM outcome_unit_links ORDER BY 1`)) as unknown as Array<{ from_key: string }>;

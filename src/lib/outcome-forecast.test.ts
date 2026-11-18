@@ -95,6 +95,54 @@ describe("FORECAST-FRESH-EVIDENCE-1118: a campaign's own cases count from day on
   });
 });
 
+describe("FORECAST-FRESH-EVIDENCE-1118: live counts are censored on the campaign's OWN curve when it holds one", () => {
+  const NOW_ = "2026-06-11T00:00:00.000Z";
+  const days = (n: number, from: string, units: number) => Array.from({ length: n }, (_, k) => ({ date: new Date(Date.parse(`${from}T00:00:00Z`) + k * 86_400_000).toISOString().slice(0, 10), units }));
+  // The fleet's curve is slow (half of the `b` Units come after 30 days: follow-up steps); the campaign's own pairs are fast.
+  const slow: DelayDistribution = { n: 5000, meanHours: 720, medianHours: 720, p10Hours: 100, p25Hours: 300, p75Hours: 1000, p90Hours: 1300, cdf: [{ hours: 120, share: 0 }, { hours: 1440, share: 1 }] };
+  const fast: DelayDistribution = { n: 79, meanHours: 12, medianHours: 12, p10Hours: 2, p25Hours: 6, p75Hours: 18, p90Hours: 22, cdf: [{ hours: 24, share: 1 }] };
+  const input = (liveCampaignDelay?: CampaignForecastInput["liveCampaignDelay"]): CampaignForecastInput => ({
+    now: NOW_,
+    salesFunnelCampaignId: "young",
+    hasTarget: true,
+    milestones: [
+      { step: "a", label: "A", ledgerKeys: ["k_a"], unitsByDay: days(10, "2026-06-01", 10.6), neededPerTarget: null }, // 106 `a` Units over the last 10 days
+      { step: "b", label: "B", ledgerKeys: ["k_b"], unitsByDay: days(10, "2026-06-01", 7.9), neededPerTarget: null }, // 79 `b` Units
+    ],
+    spendByDay: days(10, "2026-06-01", 0).map((d) => ({ date: d.date, spendUsd: 5 })),
+    capacity: { campaignStatus: "ongoing", budget: null, volumeReached: null, unreadableReason: null },
+    spendPerDayUsd: 5,
+    spendPerDaySource: "daily_budget",
+    plan: { costPerTargetUsd: null, basis: null },
+    targetValueUsd: null,
+    transition: (scope) => (scope === "fleet" ? { ...stat(18800, 42400, 5000), delay: slow } : null),
+    liveCampaignDelay,
+    silverComputedAt: "2026-06-10T18:00:00.000Z",
+  });
+  const first = (body: ReturnType<typeof campaignForecastOf>) => body.hypotheses.transitions[0]!;
+
+  it("its own fast pairs: 79 of 106 reads about 0.8, not the fleet's 2.25 nor an extrapolated 3+", () => {
+    const own = first(campaignForecastOf(input(() => fast)));
+    expect(own.yield).toMatchObject({ source: "campaign", campaignEvidence: "live_counts" });
+    expect(own.yield.unitsPerUnit!).toBeGreaterThan(0.7);
+    expect(own.yield.unitsPerUnit!).toBeLessThan(1);
+    expect(own.delay.source).toBe("campaign"); // the delay it measured itself, too
+    // Without its own pairs the fleet's slow curve censors: few of its young Units count as due, the estimate extrapolates.
+    const fleetCurve = first(campaignForecastOf(input(() => null)));
+    expect(fleetCurve.yield.campaignEvidence).toBe("live_counts");
+    expect(fleetCurve.yield.unitsPerUnit!).toBeGreaterThan(2);
+    // Under 10 pairs of its own the stored curve still censors (the sweep's rule).
+    expect(first(campaignForecastOf(input(() => ({ ...fast, n: 4 })))).yield.unitsPerUnit!).toBeGreaterThan(2);
+  });
+
+  it("found today, nothing sent yet: its zero weighs almost nothing (never a rate of zero from day one)", () => {
+    const today = { ...input(() => null), milestones: [{ step: "a", label: "A", ledgerKeys: ["k_a"], unitsByDay: [{ date: "2026-06-10", units: 500 }], neededPerTarget: null }, { step: "b", label: "B", ledgerKeys: ["k_b"], unitsByDay: [], neededPerTarget: null }] };
+    const y = first(campaignForecastOf(today)).yield;
+    expect(y.source).toBe("fleet");
+    expect(y.unitsPerUnit!).toBeGreaterThan(1.5);
+  });
+});
+
 describe("FORECAST-TUNNEL-1118: a guess does not narrow the range; a rate is drawn by the cases it is known by", () => {
   const none = { campaign: null, brand: null, fleet: null };
   const range = (y: { shape: number; rate: number }) => gammaQuantile(0.9, y.shape, y.rate) / gammaQuantile(0.1, y.shape, y.rate);
