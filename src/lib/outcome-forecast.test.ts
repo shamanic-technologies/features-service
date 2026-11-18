@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { campaignForecastOf, chooseDelay, chooseEntryCost, chooseYield, delayQuantileOf, forecastOf, lagSharesOf, mixDelayCurves, rngOf, scaledCapacity, DEFAULT_DELAY_MEDIAN_DAYS, type CampaignForecastInput, type ForecastInput } from "./outcome-forecast.js";
-import { rateEstimateOf, type DelayDistribution, type TransitionStat } from "./outcome-silver.js";
+import { campaignForecastOf, chooseDelay, chooseEntryCost, chooseYield, delayQuantileOf, forecastOf, lagSharesOf, mixDelayCurves, rngOf, scaledCapacity, DEFAULT_DELAY_MEDIAN_DAYS, PLAN_LINE_SPREAD_CASES, type CampaignForecastInput, type ForecastInput } from "./outcome-forecast.js";
+import { gammaQuantile, rateEstimateOf, type DelayDistribution, type TransitionStat } from "./outcome-silver.js";
 import type { SpendCapacityInput } from "./spend-capacity.js";
 
 const prior = { shape: 0.5, rate: 500 };
@@ -69,6 +69,94 @@ describe("chooseYield: each level blended into the one below by its own cases (T
     expect(mean(plan)).toBeCloseTo(10 / 202, 12); // ten cases at 5%, pulled by 2 Units with nothing
     expect(chooseYield(none, null, { fromUnits: 50, toUnits: 5 })).toMatchObject({ source: "default", shape: 5.5, rate: 50 });
     expect(chooseYield(none, null, { fromUnits: 0, toUnits: 0 })).toBeNull();
+  });
+});
+
+describe("FORECAST-TUNNEL-1118: a guess does not narrow the range; a rate is drawn by the cases it is known by", () => {
+  const none = { campaign: null, brand: null, fleet: null };
+  const range = (y: { shape: number; rate: number }) => gammaQuantile(0.9, y.shape, y.rate) / gammaQuantile(0.1, y.shape, y.rate);
+
+  it("a plan-line-only step is drawn from a wide range, a 1,000-case step from a tight one; the mean is the same blend", () => {
+    const planOnly = chooseYield(none, 0.05, { fromUnits: 0, toUnits: 0 })!;
+    expect(planOnly.shape / planOnly.rate).toBeCloseTo(0.05, 12);
+    expect(planOnly.effectiveCases).toBe(PLAN_LINE_SPREAD_CASES); // half a case: a human's guess
+    expect(planOnly.blend[0]).toMatchObject({ level: "plan", spreadCases: 0.5 });
+    expect(range(planOnly)).toBeGreaterThan(100); // p90 over p10
+    const thousand = chooseYield({ campaign: null, brand: null, fleet: stat(20000, 1000) }, 0.05, { fromUnits: 0, toUnits: 0 })!;
+    expect(thousand.effectiveCases).toBe(1000.5);
+    expect(range(thousand)).toBeLessThan(1.1);
+    expect(thousand.shape / thousand.rate).toBeCloseTo(1010 / 20200, 12); // the mean still blends at 10 cases
+    // 3 cases on a plan line: known by 3.5 cases, never by 13.
+    const three = chooseYield({ campaign: null, brand: null, fleet: { ...stat(70, 3), exposure: 22.5 } }, 0.05, { fromUnits: 0, toUnits: 0 })!;
+    expect(three.effectiveCases).toBe(3.5);
+    expect(three.shape / three.rate).toBeCloseTo(13 / 222.5, 12);
+    // A fallback well known counts for at most 10: 2 cases of a campaign on a fleet known by 68.
+    const leaning = chooseYield({ campaign: stat(3500, 2), brand: null, fleet: stat(52500, 70) }, 0.0013, { fromUnits: 3500, toUnits: 2 })!;
+    expect(leaning.blend.map((l) => l.spreadCases)).toEqual([0.5, 68.5, 12]);
+    expect(leaning.effectiveCases).toBe(12);
+  });
+
+  it("the tunnel: a last step known by a guess leaves many draws without a Target in the horizon; known by 1,000 cases, nearly none; the expected day does not depend on it", () => {
+    const run = (shape: number) =>
+      forecastOf({
+        now: "2026-06-01T00:00:00.000Z",
+        milestones: [{ step: "a", label: "A", unitsByDay: [] }, { step: "b", label: "B", unitsByDay: [] }],
+        yields: [{ shape, rate: shape / 0.01 }],
+        delays: [{ cdf: [{ hours: 24, share: 1 }] }],
+        entryCostDraws: [1],
+        spendUsd: Array.from({ length: 401 }, () => 2), // 2 A a day x 1% = one B every 50 days on average
+        targetRevenueUsd: null,
+        seriesDays: 200,
+        searchDays: 400,
+        draws: 2000,
+        seed: 7,
+      });
+    const guess = run(0.5);
+    const known = run(1000);
+    expect(known.nextTarget.shareWithinSearch).toBeGreaterThan(0.99);
+    expect(guess.nextTarget.shareWithinSearch).toBeLessThan(0.9); // served: the share of draws reaching the Target
+    expect(guess.nextTarget.shareWithinSearch).toBeGreaterThan(0.5);
+    // Wider on the late side: a guess is mostly a LOW rate with a few high ones (same mean), so the median and the late
+    // case come later (or beyond the horizon); the early case is the same small-day arithmetic for both.
+    expect(guess.nextTarget.medianInDays!).toBeGreaterThan(known.nextTarget.medianInDays!);
+    expect(guess.nextTarget.lateDate === null || guess.nextTarget.lateDate > known.nextTarget.lateDate!).toBe(true);
+    // The expected count is the same mean rate: the day it reaches one moves only by sampling noise.
+    expect(Math.abs(guess.nextTarget.expectedOneInDays! - known.nextTarget.expectedOneInDays!)).toBeLessThanOrEqual(8);
+    expect(known.nextTarget.expectedOneInDays).toBeGreaterThan(44);
+    expect(known.nextTarget.expectedOneInDays).toBeLessThan(56);
+  });
+
+  it("a delay curve resting on a default: each draw takes ONE curve by share, so the dates spread while the expected flow is the mixture's", () => {
+    const fast = [{ hours: 24, share: 1 }];
+    const slow = [{ hours: 24 * 199, share: 0 }, { hours: 24 * 200, share: 1 }];
+    const input = (delays: ForecastInput["delays"]): ForecastInput => ({
+      now: "2026-06-01T00:00:00.000Z",
+      milestones: [{ step: "a", label: "A", unitsByDay: [] }, { step: "b", label: "B", unitsByDay: [] }],
+      yields: [{ shape: 1e6, rate: 1e6 / 0.5 }],
+      delays,
+      entryCostDraws: [1],
+      spendUsd: [0, 40, ...Array.from({ length: 499 }, () => 0)], // 40 A on day 1 = 20 B, when the delay lets them
+      targetRevenueUsd: null,
+      seriesDays: 300,
+      searchDays: 500,
+      draws: 1000,
+      seed: 3,
+    });
+    const mixture = mixDelayCurves(fast, slow, 0.5);
+    const fixed = forecastOf(input([{ cdf: mixture }]));
+    const drawn = forecastOf(input([{ cdf: mixture, curves: [{ share: 0.5, cdf: fast }, { share: 0.5, cdf: slow }] }]));
+    const b = (f: typeof fixed) => f.outcomes[1]!.cumulativeUnits;
+    // The mixture alone: every draw holds about 10 B by day 100. One curve per draw: half hold 20, half none.
+    expect(b(fixed).p10[99]!).toBeGreaterThan(4);
+    expect(b(drawn).p10[99]!).toBe(0);
+    expect(b(drawn).p90[99]!).toBeGreaterThan(14);
+    // The expected flow is the same mixture.
+    expect(Math.abs(b(drawn).expected[99]! - b(fixed).expected[99]!)).toBeLessThan(1.5);
+    expect(b(drawn).expected[299]!).toBeCloseTo(20, 0);
+    // A curve weighing under 2% is not drawn; a transition stating no mixture draws nothing more.
+    const tiny = forecastOf(input([{ cdf: fast, curves: [{ share: 0.99, cdf: fast }, { share: 0.01, cdf: slow }] }]));
+    expect(b(tiny).p10[99]!).toBeGreaterThan(10);
+    expect(chooseDelay({ campaign: null, brand: null, fleet: stat(1, 1, 2) }).curves.map((c) => [c.level, c.share])).toEqual([["default", 10 / 12], ["fleet", 2 / 12]]);
   });
 });
 
