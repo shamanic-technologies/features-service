@@ -13,7 +13,7 @@ import { StoreNotComputedError } from "../lib/await-warm-store.js";
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { buildScopeKey, sendSnapshotJson, servedCachedJson } from "../lib/view-cache.js";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { fetchBrandLegEconomics } from "../lib/brand-leg-economics-client.js";
@@ -305,7 +305,7 @@ router.get("/offers/:offerId/sales-paths", apiKeyAuth, async (rawReq, res) => {
     const selection = offerFunnelSelection(rows, offerId, legEconomics.offers.length === 1);
     const payload = await servedCachedJson({
       view: "offer-sales-paths",
-      responseShape: routeResponseShapeFingerprint("/offers/{offerId}/sales-paths"),
+      ...routeCacheFingerprints("/offers/{offerId}/sales-paths"),
       scopeKey: buildScopeKey(offerId, {
         orgId: identity.orgId,
         brandId,

@@ -6,7 +6,10 @@ import {
   currentShapeFingerprints,
   isCurrentShapeKey,
   routeResponseShapeFingerprint,
+  routeComputeRule,
+  routeCacheFingerprints,
   ROUTE_COMPUTE_RULES,
+  RULE_KEY_PART,
   shapeFingerprint,
   withResponseShape,
   withoutResponseShape,
@@ -102,31 +105,53 @@ describe("routeResponseShapeFingerprint", () => {
   });
 });
 
-describe("ROUTE_COMPUTE_RULES (CAMPAIGN-TOTAL-POSREPLY-1106-B: a computation fix retires the previous build's cells)", () => {
+describe("ROUTE_COMPUTE_RULES (MON-PAGE-SPEED-1118: compute rule is a scope-key part, not in the shape fingerprint)", () => {
   const doc = {
     paths: { "/x": { get: { responses: { 200: { description: "ok", content: { "application/json": { schema: { type: "integer" } } } } } } } },
   };
 
-  it("a stated rule moves the route's fingerprint; changing it moves it again; no rule hashes as before", () => {
+  it("a compute rule does NOT move the route's shape fingerprint (separated from shape for family rotation)", () => {
     const none = routeResponseShapeFingerprint("/x", "get", doc, {});
     const v1 = routeResponseShapeFingerprint("/x", "get", doc, { "/x": "fix-a" });
     const v2 = routeResponseShapeFingerprint("/x", "get", doc, { "/x": "fix-b" });
-    expect(new Set([none, v1, v2]).size).toBe(3);
-    expect(routeResponseShapeFingerprint("/x", "get", doc, { "/other": "fix-a" })).toBe(none);
+    // All three are the SAME: the shape fingerprint hashes only the response schema, not the rule.
+    expect(v1).toBe(none);
+    expect(v2).toBe(none);
   });
 
-  it("an old-rule cell is not current, so it is never served nor counted as held", () => {
+  it("routeComputeRule returns the rule when stated, undefined otherwise", () => {
+    expect(routeComputeRule("/x", { "/x": "fix-a" })).toBe("fix-a");
+    expect(routeComputeRule("/x", {})).toBeUndefined();
+    expect(routeComputeRule("/x", { "/other": "fix-a" })).toBeUndefined();
+  });
+
+  it("routeCacheFingerprints returns both shape and rule", () => {
+    const fp = routeCacheFingerprints("/brands/{brandId}/campaign-targets");
+    expect(fp.responseShape).toMatch(/^[0-9a-f]{12}$/);
+    expect(fp.computeRule).toBe(ROUTE_COMPUTE_RULES["/brands/{brandId}/campaign-targets"]);
+  });
+
+  it("a shape change still retires the cell (the shape fingerprint IS the cell boundary for wrong-schema bodies)", () => {
     const path = "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/spend-charts";
-    const before = routeResponseShapeFingerprint(path, "get", openApiDocument, {});
-    expect(before).not.toBe(routeResponseShapeFingerprint(path));
-    expect(isCurrentShapeKey(withResponseShape("sfc|pricing=net", before))).toBe(false);
-    expect(isCurrentShapeKey(withResponseShape("sfc|pricing=net", routeResponseShapeFingerprint(path)))).toBe(true);
+    const current = routeResponseShapeFingerprint(path);
+    expect(isCurrentShapeKey(withResponseShape("sfc|pricing=net", current))).toBe(true);
+    expect(isCurrentShapeKey(withResponseShape("sfc|pricing=net", "0123456789ab"))).toBe(false);
   });
 
   it("every route named holds a GET in the served document (a typo would bump nothing)", () => {
     for (const path of Object.keys(ROUTE_COMPUTE_RULES)) {
       expect(routeResponseShapeFingerprint(path, "get", openApiDocument)).toMatch(/^[0-9a-f]{12}$/);
     }
+  });
+
+  it("_rule is a FINGERPRINT_KEY_PART: a rule bump finds a family member, a shape change does not", () => {
+    const base = buildScopeKey("brand1", { orgId: "o", pricing: "net" });
+    const ruleA = `${base}&${RULE_KEY_PART}=fix-a`;
+    const ruleB = `${base}&${RULE_KEY_PART}=fix-b`;
+    // Different rules → same FAMILY (rule is a fingerprint part, removed from family key).
+    expect(familyKeyOf(withResponseShape(ruleA, "shape1"))).toBe(familyKeyOf(withResponseShape(ruleB, "shape1")));
+    // Different shapes → different FAMILY (shape is NOT a fingerprint part).
+    expect(familyKeyOf(withResponseShape(ruleA, "shape1"))).not.toBe(familyKeyOf(withResponseShape(ruleA, "shape2")));
   });
 });
 
@@ -165,7 +190,9 @@ describe("dashboard views keyed on their OWN route's shape", () => {
     ["workflow-projection.ts", "/features/{featureSlug}/workflow-projection"],
     ["offer-sales-paths.ts", "/offers/{offerId}/sales-paths"],
   ])("%s keys on %s", (file, path) => {
-    expect(read(file)).toContain(`routeResponseShapeFingerprint("${path}")`);
+    // MON-PAGE-SPEED-1118: routes with a compute rule use `routeCacheFingerprints` (threads both shape and rule).
+    const src = read(file);
+    expect(src.includes(`routeResponseShapeFingerprint("${path}")`) || src.includes(`routeCacheFingerprints("${path}")`)).toBe(true);
     expect(() => routeResponseShapeFingerprint(path)).not.toThrow();
   });
 });

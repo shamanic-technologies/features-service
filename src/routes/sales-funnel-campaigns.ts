@@ -37,7 +37,7 @@ import { funnelsContainingLeg, isOutboundLegKeySpelling, storedLegKeyOf } from "
 import { mapWithConcurrency } from "../lib/concurrency.js";
 import { servedCached, servedCachedJson, sendSnapshotJson, buildScopeKey } from "../lib/view-cache.js";
 import { createHash } from "node:crypto";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import type { DeclaredSalesFunnel } from "../lib/sales-funnels-client.js";
 import { fetchSalesFunnelCampaigns, fetchUnitRunsOnTriggerId, type SalesFunnelUnitRow } from "../lib/sales-funnel-campaigns-client.js";
 import { runningFunnelIdOf } from "../lib/running-funnel.js";
@@ -224,7 +224,7 @@ function tableCellOf(brandId: string, offerFilter: string | null, pricing: Prici
     view: "sales-funnel-campaigns",
     scopeKey: buildScopeKey(brandId, { orgId: headers.orgId, offerId: offerFilter ?? undefined, pricing, rows: rowsFingerprint(rows) }),
     orgId: headers.orgId,
-    responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
+    ...routeCacheFingerprints("/brands/{brandId}/sales-funnel-campaigns"),
     compute: () => computeFunnelCampaignTable(brandId, offerFilter, pricing, rows, headers),
   };
 }
@@ -326,7 +326,7 @@ async function computeFunnelCampaignTable(
           // another route no longer makes every money cell cold, so the last good value stays servable (stale,
           // refreshed behind) even while a dependency fails. Measured 2026-10-16: 20-27 key generations per
           // campaign in one day, each first read a full compute (502 while lead-service failed).
-          responseShape: routeResponseShapeFingerprint("/brands/{brandId}/sales-funnel-campaigns"),
+          ...routeCacheFingerprints("/brands/{brandId}/sales-funnel-campaigns"),
           compute: async () => {
             // A step the engine values nothing at (Lead found) subtracts $0: the engine's own figures ARE the formula.
             if (takeoverStep && STEP_SIGNAL[takeoverStep] && takeoverUnit && takeoverToStep && funnel) {

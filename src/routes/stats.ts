@@ -1,4 +1,4 @@
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 import { readScopeMaturitySoft } from "../lib/scope-maturity.js";
 import { Router } from "express";
 import { eq } from "drizzle-orm";
@@ -1212,7 +1212,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     // cell instead of each rendered row paying for its own identical fan-out.
     const payload = await servedCachedJson({
       view: "stats",
-      responseShape: routeResponseShapeFingerprint("/features/{featureSlug}/stats"),
+      ...routeCacheFingerprints("/features/{featureSlug}/stats"),
       scopeKey: buildScopeKey(featureSlug, {
         orgId,
         groupBy: groupByParam,

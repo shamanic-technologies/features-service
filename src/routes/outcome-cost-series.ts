@@ -46,7 +46,7 @@ import {
 } from "../lib/outcome-cost-series.js";
 import { servedCached, buildScopeKey } from "../lib/view-cache.js";
 import { offerMixOfStep, type OfferMixStep, type OfferStepInput } from "../lib/brand-offer-mix.js";
-import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { routeCacheFingerprints } from "../lib/response-shape.js";
 
 const router = Router();
 
@@ -442,7 +442,7 @@ router.get("/brands/:brandId/outcome-cost-series", apiKeyAuth, async (req, res) 
         pricing,
       }),
       orgId: headers.orgId,
-      responseShape: routeResponseShapeFingerprint("/brands/{brandId}/outcome-cost-series"),
+      ...routeCacheFingerprints("/brands/{brandId}/outcome-cost-series"),
       compute: () => computeBrandOutcomeCostSeries(brandId, offerIds, rows, channels, pricing, headers),
     });
     res.json(body);
@@ -482,7 +482,7 @@ router.get("/offers/:offerId/outcome-cost-series", apiKeyAuth, async (req, res) 
         pricing,
       }),
       orgId: headers.orgId,
-      responseShape: routeResponseShapeFingerprint("/offers/{offerId}/outcome-cost-series"),
+      ...routeCacheFingerprints("/offers/{offerId}/outcome-cost-series"),
       compute: () => computeOutcomeCostSeries(offerId, brandId, ofOffer, offerChannels, pricing, headers),
     });
     res.json(body);

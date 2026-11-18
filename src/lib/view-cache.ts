@@ -15,7 +15,7 @@ import {
   viewCacheRole,
 } from "./view-refresher.js";
 import { brandIdOfRequest, factsFingerprint } from "./view-facts.js";
-import { withResponseShape } from "./response-shape.js";
+import { withResponseShape, RULE_KEY_PART } from "./response-shape.js";
 
 /**
  * Gold serving layer — stale-while-revalidate read-through cache for expensive feature views.
@@ -218,6 +218,13 @@ export interface CachedViewArgs<T> {
    * deploy changing another route does not make it cold.
    */
   responseShape?: string;
+  /**
+   * The route's compute rule (MON-PAGE-SPEED-1118). Threaded into the scope key as `_rule=<value>`,
+   * which is a FINGERPRINT part: a rule bump finds a family member from the previous build and serves
+   * it stale-while-revalidate (50 ms) instead of blocking on a cold compute (20-50 s). Omit when
+   * no rule exists (the cell is keyed on schema shape alone).
+   */
+  computeRule?: string;
   /** Runs the live engine fan-out and returns the response body. */
   compute: () => Promise<T>;
 }
@@ -352,10 +359,13 @@ export function sendSnapshotJson(res: import("express").Response, body: Snapshot
   return res.send(wire.buffer);
 }
 
-async function servedCachedBody<T>({ view, scopeKey: askedKey, orgId, ttlMs, maxStaleMs, responseShape, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
+async function servedCachedBody<T>({ view, scopeKey: askedKey, orgId, ttlMs, maxStaleMs, responseShape, computeRule, compute: rawCompute }: CachedViewArgs<T>): Promise<CachedBody> {
   // Every cell is bound to the response SHAPE of the build serving it (lib/response-shape.ts): a deploy
   // that changes a field never serves the previous build's body, not even as a stale or family hit.
-  const scopeKey = withResponseShape(askedKey, responseShape);
+  // MON-PAGE-SPEED-1118: the compute RULE is a SEPARATE fingerprint part (`_rule`), so a rule bump finds
+  // a family member (stale-while-revalidate) while a schema change still forces a cold miss.
+  const withRule = computeRule ? `${askedKey}${askedKey.includes("|") ? "&" : "|"}${RULE_KEY_PART}=${computeRule}` : askedKey;
+  const scopeKey = withResponseShape(withRule, responseShape);
   // Every view compute reads leads through the live copy (lib/lead-copy.ts): these are the views a
   // customer polls, which is exactly the population the change feed exists for.
   const localCompute = async () => bodyFromValue(await withLiveLeadCopy(rawCompute));
@@ -735,7 +745,11 @@ export async function latestFamilyCellJson(args: { view: string; familyKey: stri
 // was computed from (`routes/sales-funnel-campaigns.ts`).
 // `channels`: the brand's channel set, derived from its campaign list (never a question the caller asks),
 // so a brand read can find its newest cell BEFORE reading that list (`latestFamilyCellJson`).
-const FINGERPRINT_KEY_PARTS = ["econ", "decl", "offersEcon", "rows", "channels"] as const;
+// MON-PAGE-SPEED-1118: `_rule` (the route's compute-rule bump) is a fingerprint part, so a rule change
+// finds a family member from the previous build and serves it stale-while-revalidate (50 ms) instead of
+// blocking on a cold compute (20-50 s). `_shape` stays OUTSIDE: a schema change (new/removed field) is
+// a cold miss because the old body has the wrong shape.
+const FINGERPRINT_KEY_PARTS = ["econ", "decl", "offersEcon", "rows", "channels", "_rule"] as const;
 
 export function familyKeyOf(scopeKey: string): string {
   const bar = scopeKey.indexOf("|");

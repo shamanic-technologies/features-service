@@ -19,7 +19,7 @@ describe("offer sales-paths read served from its Gold cell", () => {
     for (const part of ["orgId: identity.orgId", "brandId,", "scope,", "creditUsd: String(creditUsd)", "econ: fingerprint(legEconomics)", "decl: fingerprint(selection)"]) {
       expect(handler).toContain(part);
     }
-    expect(handler).toContain('routeResponseShapeFingerprint("/offers/{offerId}/sales-paths")');
+    expect(handler).toContain('routeCacheFingerprints("/offers/{offerId}/sales-paths")');
   });
 
   it("an offer the brand does not sell is still a 404 (never a cached body)", () => {
