@@ -10627,20 +10627,38 @@ registry.registerPath({
                   toOutcomeKey: z.string().nullable(),
                   yield: z.object({
                     source: ForecastSourceSchema,
-                    unitsPerUnit: z.number().nullable().describe("Units of `toStep` per Unit of `fromStep` (mean of the estimate; × 100 = % Conversion)."),
+                    unitsPerUnit: z.number().nullable().describe("THE RATE USED by the projection: Units of `toStep` per Unit of `fromStep` (× 100 = % Conversion). A BLENDED rate (THIN-SAMPLE-BLEND-1118): the plan line's, then what the fleet, the brand and the campaign measured, each blended into the level below by its own cases. Print this one as the rate; `blend` says what it rests on. Never print a level's raw `measuredRate` as the rate used."),
                     median: z.number().nullable(),
                     p10: z.number().nullable(),
                     p90: z.number().nullable(),
-                    thinnerScopes: z.array(z.enum(["campaign", "brand"])).describe("Finer scopes that hold a sample too thin to stand alone (it only nudges the estimate): say it."),
+                    thinnerScopes: z.array(z.enum(["campaign", "brand"])).describe("Finer scopes that hold evidence but weigh less than `source` in the rate used."),
+                    pseudoCases: z.number().describe("The fixed strength of a fallback, in cases (10): a level's own measurement weighs cases-it-could-expect / (those + 10) against the level below. 3 cases barely move it, 10 weigh half, 100 weigh 91%."),
+                    blend: z
+                      .array(
+                        z.object({
+                          level: ForecastSourceSchema,
+                          cases: z.number().nullable().describe("Units of `toStep` this level adds that the finer levels do not hold (the fleet without the brand, the brand without the campaign); null on the plan line."),
+                          exposure: z.number().nullable().describe("The `fromStep` Units those cases were counted over (censored by age); null on the plan line."),
+                          measuredRate: z.number().nullable().describe("The level's own RAW rate (cases / exposure; the plan line's stated rate). Not the rate used."),
+                          fallbackRate: z.number().nullable().describe("The blended rate of the level below: what this level falls back on; null = nothing below."),
+                          weight: z.number().nullable().describe("Share of this level's own measurement in ITS blended rate (0 = the fallback alone, 1 = itself alone)."),
+                          blendedRate: z.number().nullable().describe("The rate after blending at this level; the last level's equals `unitsPerUnit`."),
+                          share: z.number().nullable().describe("Share of this level's measurement in the rate finally used; the shares sum to 1. `source` = the largest."),
+                        }),
+                      )
+                      .describe("The ladder the rate rests on, fallback first (plan line, fleet, brand, campaign): per level its raw measured rate with its cases, the fallback, the weight and the blended rate."),
                     evidence: z.array(z.object({ scope: z.enum(["campaign", "brand", "fleet"]), fromUnits: z.number(), toUnits: z.number().describe("Units of the next milestone COUNTED in the scope: the yield's count, whether or not a stored link ties them."), linkedToUnits: z.number().describe("Of toUnits, those a stored link of the ledger ties to a Unit of this milestone."), linkCoverage: z.number().nullable().describe("linkedToUnits / toUnits; null without a `to` Unit. A thin coverage means the delay rests on few of the Units; the yield does not depend on it."), exposure: z.number(), delayPairs: z.number() })).describe("What each scope measured on this transition (sample sizes, and how much of it the ledger's links tie)."),
                   }),
                   delay: z.object({
                     source: ForecastSourceSchema,
                     pairs: z.number().describe("Pairs of Units behind the curve (0 on the default)."),
-                    thinSample: z.boolean().describe("Under 10 pairs: the largest sample measured, kept over the default."),
-                    medianHours: z.number().nullable(),
+                    thinSample: z.boolean().describe("`source` holds under 10 pairs."),
+                    medianHours: z.number().nullable().describe("Of the BLENDED curve the projection uses (the default curve, then each measured curve mixed in with the weight pairs / (pairs + 10))."),
                     p10Hours: z.number().nullable(),
                     p90Hours: z.number().nullable(),
+                    blend: z
+                      .array(z.object({ level: ForecastSourceSchema, pairs: z.number().describe("Pairs this level adds that the finer levels do not hold (0 on the default)."), medianHours: z.number().nullable().describe("The level's own median (the default's assumed 21 days)."), weight: z.number().nullable(), share: z.number().nullable().describe("Share of this level's curve in the curve used; `source` = the largest.") }))
+                      .describe("The ladder the delay curve rests on, default first."),
                   }),
                 }),
               ),

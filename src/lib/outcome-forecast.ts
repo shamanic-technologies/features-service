@@ -18,7 +18,7 @@
  *
  * ONE mechanism for every campaign and outcome (guard `outcome-silver.test.ts`).
  */
-import { gammaQuantile, MIN_DELAY_PAIRS, type DelayDistribution, type GammaPrior, type TransitionStat } from "./outcome-silver.js";
+import { delayCdfAt, gammaQuantile, MIN_DELAY_PAIRS, type TransitionStat } from "./outcome-silver.js";
 import { capacityUnavailableReason, expectedScheduleOf, SCHEDULE_DAYS, type SpendCapacityInput } from "./spend-capacity.js";
 
 export type HypothesisSource = "campaign" | "brand" | "fleet" | "plan" | "default";
@@ -37,14 +37,48 @@ export interface ScopeEvidence {
   delayPairs: number;
 }
 
+/**
+ * THIN-SAMPLE-BLEND-1118 (owner 2026-11-18). A measured figure resting on few cases is BLENDED with its fallback, in
+ * proportion to its cases: the order stays measured before default (campaign > brand > fleet > plan line), and each
+ * level is shrunk toward the level below it by its own sample size. Method: conjugate Bayesian updating (Gamma-Poisson
+ * for a rate), the level below being the prior, restated at a FIXED strength of `BLEND_PSEUDO_CASES` cases: the weight
+ * of a level's own measurement is cases-it-could-expect ÷ (those + 10). So 3 cases against 10 barely move the fallback,
+ * 10 weigh half, 100 weigh 91%, thousands read as themselves. Ten = the sample this file already called thin under
+ * (`MIN_DELAY_PAIRS`). One rule for every transition, scope and Engine.
+ */
+export const BLEND_PSEUDO_CASES = 10;
+/** Bump when a rule here changes what a stored forecast means: it is in the forecast cell's key (Silver is not re-swept for it). */
+export const FORECAST_RULE = "2026-11-18.1-thin-sample-blend";
+
+/** One level of the ladder a figure rests on, from the fallback up to the campaign. */
+export interface BlendLevel {
+  level: HypothesisSource;
+  /** What this level adds that the finer levels do not hold: its cases and the exposure they were counted over (null on the plan line). */
+  cases: number | null;
+  exposure: number | null;
+  /** The level's own raw rate (cases ÷ exposure; the plan line's stated rate); null without exposure. */
+  measuredRate: number | null;
+  /** The blended rate of the level below: what this level falls back on. null = nothing below. */
+  fallbackRate: number | null;
+  /** Share of this level's own measurement in ITS blended rate (0 = the fallback alone, 1 = itself alone). */
+  weight: number;
+  /** The rate after blending at this level; the last level's is the rate the projection uses. */
+  blendedRate: number;
+  /** Share of this level's measurement in the rate finally used (the levels' shares sum to 1). */
+  share: number;
+}
+
 export interface YieldHypothesis {
+  /** The level weighing most in the rate used. */
   source: HypothesisSource;
-  /** Units of the next milestone per Unit of this one: Gamma(shape, rate). */
+  /** Units of the next milestone per Unit of this one: Gamma(shape, rate). Its mean is the blended rate used. */
   shape: number;
   rate: number;
-  /** A finer scope exists but its sample is thinner than the fleet prior weighs: it only nudges the estimate. */
+  /** Finer scopes that hold evidence but weigh less than `source`. */
   thinnerScopes: Array<"campaign" | "brand">;
   evidence: ScopeEvidence[];
+  /** The ladder, fallback first: each level's raw rate with its cases, what it fell back on, its weight and the result. */
+  blend: BlendLevel[];
 }
 
 export interface TransitionStats {
@@ -59,60 +93,144 @@ const evidenceOf = (s: TransitionStats): ScopeEvidence[] =>
     return t ? [{ scope, fromUnits: t.fromUnits, toUnits: t.toUnits, linkedToUnits: t.linkedToUnits, linkCoverage: t.linkCoverage, exposure: t.exposure, delayPairs: t.delay?.n ?? 0 }] : [];
   });
 
+const sharesAfter = <T extends { share: number }>(levels: T[], weight: number): void => {
+  for (const l of levels) l.share *= 1 - weight;
+};
+const heaviest = <T extends { share: number; level: HypothesisSource }>(levels: readonly T[]): T => levels.reduce((a, l) => (l.share >= a.share ? l : a));
+
 /**
- * PURE. The yield a projection takes for one transition. A scope's sample is THIN while its exposure weighs less than the
- * fleet prior (`prior.rate` `from` Units): the next scope up is taken, and said. With no pair measured anywhere in the fleet:
- * the plan line's rate (weak: half a Unit), else the campaign's own counts on the weakest prior; nothing at all = null.
+ * PURE. The yield a projection takes for one transition: the plan line's rate, then what the fleet, the brand and the
+ * campaign measured, each BLENDED into the level below by its own cases (`BLEND_PSEUDO_CASES`). A level counts what the
+ * finer ones do not already hold (the fleet without the brand, the brand without the campaign): no case weighs twice.
+ * With no plan rate the coarsest measured level stands alone (half a case added: never a zero rate). Nothing at all = null.
  */
 export function chooseYield(s: TransitionStats, planRate: number | null, own: { fromUnits: number; toUnits: number }): YieldHypothesis | null {
   const evidence = evidenceOf(s);
-  const prior: GammaPrior | null = s.fleet?.prior ?? s.brand?.prior ?? s.campaign?.prior ?? null;
-  if (prior !== null) {
-    const thick = (t: TransitionStat | null): t is TransitionStat => t !== null && t.exposure >= prior.rate;
-    if (thick(s.campaign)) return { source: "campaign", shape: s.campaign.yield.shape, rate: s.campaign.yield.rate, thinnerScopes: [], evidence };
-    const thinner: Array<"campaign" | "brand"> = s.campaign ? ["campaign"] : [];
-    if (thick(s.brand)) return { source: "brand", shape: s.brand.yield.shape, rate: s.brand.yield.rate, thinnerScopes: thinner, evidence };
-    if (s.brand) thinner.push("brand");
-    // The fleet prior, moved by whatever the finest thin scope holds (still its own evidence, weighed for what it is).
-    const y = (s.campaign ?? s.brand ?? s.fleet)!.yield;
-    return { source: "fleet", shape: y.shape, rate: y.rate, thinnerScopes: thinner, evidence };
+  const K = BLEND_PSEUDO_CASES;
+  const of = (t: TransitionStat | null) => (t ? { y: t.toUnits, e: Math.max(t.exposure, 0) } : null);
+  const less = (a: { y: number; e: number } | null, x: { y: number; e: number } | null) => (a ? { y: Math.max(a.y - (x?.y ?? 0), 0), e: Math.max(a.e - (x?.e ?? 0), 0) } : null);
+  const measuredAnywhere = s.campaign !== null || s.brand !== null || s.fleet !== null;
+  // With no Silver stat at all, the campaign's own counts are its evidence (uncensored: nothing says how long it takes).
+  const c = measuredAnywhere ? of(s.campaign) : { y: own.toUnits, e: own.fromUnits };
+  const b = of(s.brand);
+  const f = of(s.fleet);
+  const ladder: Array<[HypothesisSource, { y: number; e: number } | null]> = [["fleet", less(f, b ?? c)], ["brand", less(b, c)], [measuredAnywhere ? "campaign" : "default", c]];
+
+  const blend: BlendLevel[] = [];
+  let shape: number | null = null;
+  let rate = 0;
+  if (planRate !== null && planRate > 0) {
+    shape = K;
+    rate = K / planRate;
+    blend.push({ level: "plan", cases: null, exposure: null, measuredRate: planRate, fallbackRate: null, weight: 1, blendedRate: planRate, share: 1 });
   }
-  if (planRate !== null && planRate > 0) return { source: "plan", shape: 0.5 + own.toUnits, rate: 0.5 / planRate + own.fromUnits, thinnerScopes: [], evidence };
-  if (own.fromUnits > 0) return { source: "default", shape: 0.5 + own.toUnits, rate: own.fromUnits, thinnerScopes: [], evidence };
-  return null;
+  for (const [level, ev] of ladder) {
+    if (ev === null || ev.e <= 0) continue;
+    const measuredRate = ev.y / ev.e;
+    if (shape === null) {
+      shape = 0.5 + ev.y;
+      rate = ev.e;
+      blend.push({ level, cases: ev.y, exposure: ev.e, measuredRate, fallbackRate: null, weight: 1, blendedRate: shape / rate, share: 1 });
+      continue;
+    }
+    // The level below, restated at K cases, updated by this level's own cases over its own exposure.
+    const fallbackRate: number = shape / rate;
+    const priorRate = K / fallbackRate;
+    const weight = ev.e / (priorRate + ev.e);
+    shape = K + ev.y;
+    rate = priorRate + ev.e;
+    sharesAfter(blend, weight);
+    blend.push({ level, cases: ev.y, exposure: ev.e, measuredRate, fallbackRate, weight, blendedRate: shape / rate, share: weight });
+  }
+  if (shape === null) return null;
+  const source = heaviest(blend).level;
+  const finer = (["campaign", "brand"] as const).filter((scope) => s[scope] !== null);
+  const rank: Record<HypothesisSource, number> = { default: 0, plan: 0, fleet: 1, brand: 2, campaign: 3 };
+  return { source, shape, rate, thinnerScopes: finer.filter((scope) => rank[scope] > rank[source]), evidence, blend };
+}
+
+/** One level of the ladder a delay curve rests on. */
+export interface DelayBlendLevel {
+  level: HypothesisSource;
+  /** Pairs this level adds that the finer levels do not hold (0 on the default). */
+  pairs: number;
+  /** The level's own measured median; the default's assumed one. */
+  medianHours: number;
+  /** Share of this level's own curve in ITS blended curve, and in the curve finally used. */
+  weight: number;
+  share: number;
 }
 
 export interface DelayHypothesis {
+  /** The level weighing most in the curve used. */
   source: HypothesisSource;
-  /** Pairs behind the curve (0 on the default). */
+  /** Pairs behind `source`'s own curve (0 on the default). */
   pairs: number;
-  /** Under MIN_DELAY_PAIRS pairs: the largest sample measured anywhere, taken over the default (a measured figure wins). */
+  /** `source` holds under MIN_DELAY_PAIRS pairs. */
   thinSample: boolean;
+  /** Of the BLENDED curve: what the projection uses. */
   medianHours: number;
   p10Hours: number;
   p90Hours: number;
   cdf: Array<{ hours: number; share: number }>;
+  /** The ladder, default first. */
+  blend: DelayBlendLevel[];
 }
 
 /** With no pair measured anywhere: half the Units within this many days (the maturity window `lib/maturity.ts` has always assumed), exponential. */
 export const DEFAULT_DELAY_MEDIAN_DAYS = 21;
 
-function defaultDelay(): DelayHypothesis {
+function defaultDelayCdf(): Array<{ hours: number; share: number }> {
   const medianHours = DEFAULT_DELAY_MEDIAN_DAYS * 24;
   const F = (h: number) => 1 - Math.pow(2, -h / medianHours);
   const cdf: Array<{ hours: number; share: number }> = [];
   for (let d = 1; d <= 180; d += d < 14 ? 1 : 7) cdf.push({ hours: d * 24, share: F(d * 24) });
   cdf.push({ hours: 365 * 24, share: 1 });
-  return { source: "default", pairs: 0, thinSample: false, medianHours, p10Hours: -Math.log2(0.9) * medianHours, p90Hours: -Math.log2(0.1) * medianHours, cdf };
+  return cdf;
 }
 
-/** PURE. The delay curve a projection takes: the finest scope with a sample that is not thin, else the largest sample measured, else the default. */
+/** PURE. The mixture of two delay curves: `weight` of `a`, the rest of `b`, on every hour either one names. */
+export function mixDelayCurves(a: ReadonlyArray<{ hours: number; share: number }>, b: ReadonlyArray<{ hours: number; share: number }>, weight: number): Array<{ hours: number; share: number }> {
+  const hours = [...new Set([...a, ...b].map((p) => p.hours))].sort((x, y) => x - y);
+  return hours.map((h) => ({ hours: h, share: weight * delayCdfAt(a, h) + (1 - weight) * delayCdfAt(b, h) }));
+}
+
+/** PURE. The hours by which a curve has let `q` of its Units through (linear between its points). */
+export function delayQuantileOf(cdf: ReadonlyArray<{ hours: number; share: number }>, q: number): number {
+  let ph = 0;
+  let ps = 0;
+  for (const p of cdf) {
+    if (p.share >= q) return p.share === ps ? p.hours : ph + (p.hours - ph) * ((q - ps) / (p.share - ps));
+    ph = p.hours;
+    ps = p.share;
+  }
+  return ph;
+}
+
+/**
+ * PURE. The delay curve a projection takes: the default curve, then the fleet's, the brand's and the campaign's measured
+ * curves, each MIXED into the one below with the weight pairs ÷ (pairs + `BLEND_PSEUDO_CASES`), a level counting the pairs
+ * the finer ones do not already hold (THIN-SAMPLE-BLEND-1118: 2 pairs no longer set a curve alone).
+ */
 export function chooseDelay(s: TransitionStats): DelayHypothesis {
-  const ladder = (["campaign", "brand", "fleet"] as const).flatMap((scope) => (s[scope]?.delay ? [[scope, s[scope]!.delay as DelayDistribution] as const] : []));
-  const pick = ladder.find(([, d]) => d.n >= MIN_DELAY_PAIRS) ?? [...ladder].sort((a, b) => b[1].n - a[1].n)[0];
-  if (!pick) return defaultDelay();
-  const [source, d] = pick;
-  return { source, pairs: d.n, thinSample: d.n < MIN_DELAY_PAIRS, medianHours: d.medianHours, p10Hours: d.p10Hours, p90Hours: d.p90Hours, cdf: d.cdf };
+  const K = BLEND_PSEUDO_CASES;
+  let cdf = defaultDelayCdf();
+  const blend: DelayBlendLevel[] = [{ level: "default", pairs: 0, medianHours: DEFAULT_DELAY_MEDIAN_DAYS * 24, weight: 1, share: 1 }];
+  const own = new Map<HypothesisSource, number>([["default", 0]]);
+  const n = (scope: "campaign" | "brand" | "fleet") => s[scope]?.delay?.n ?? 0;
+  const ladder: Array<["fleet" | "brand" | "campaign", number]> = [["fleet", n("fleet") - (s.brand?.delay ? n("brand") : n("campaign"))], ["brand", n("brand") - n("campaign")], ["campaign", n("campaign")]];
+  for (const [scope, pairs] of ladder) {
+    const d = s[scope]?.delay;
+    if (!d || pairs <= 0) continue;
+    const weight = pairs / (pairs + K);
+    cdf = mixDelayCurves(d.cdf, cdf, weight);
+    sharesAfter(blend, weight);
+    blend.push({ level: scope, pairs, medianHours: d.medianHours, weight, share: weight });
+    own.set(scope, d.n);
+  }
+  const source = heaviest(blend).level;
+  const pairs = own.get(source) ?? 0;
+  return { source, pairs, thinSample: source !== "default" && pairs < MIN_DELAY_PAIRS, medianHours: delayQuantileOf(cdf, 0.5), p10Hours: delayQuantileOf(cdf, 0.1), p90Hours: delayQuantileOf(cdf, 0.9), cdf, blend };
 }
 
 export interface EntryCostHypothesis {
@@ -589,8 +707,27 @@ export function campaignForecastOf(i: CampaignForecastInput) {
           toStep: p.to.step,
           fromOutcomeKey: p.keys?.a ?? null,
           toOutcomeKey: p.keys?.b ?? null,
-          yield: { source: p.yield!.source, unitsPerUnit: round(b.mean), median: round(b.median), p10: round(b.p10), p90: round(b.p90), thinnerScopes: p.yield!.thinnerScopes, evidence: p.yield!.evidence },
-          delay: { source: p.delay.source, pairs: p.delay.pairs, thinSample: p.delay.thinSample, medianHours: round(p.delay.medianHours), p10Hours: round(p.delay.p10Hours), p90Hours: round(p.delay.p90Hours) },
+          // `unitsPerUnit` = the BLENDED rate the projection uses; `blend` = what it rests on (THIN-SAMPLE-BLEND-1118).
+          yield: {
+            source: p.yield!.source,
+            unitsPerUnit: round(b.mean),
+            median: round(b.median),
+            p10: round(b.p10),
+            p90: round(b.p90),
+            thinnerScopes: p.yield!.thinnerScopes,
+            pseudoCases: BLEND_PSEUDO_CASES,
+            blend: p.yield!.blend.map((l) => ({ level: l.level, cases: l.cases, exposure: l.exposure === null ? null : round(l.exposure), measuredRate: l.measuredRate === null ? null : round(l.measuredRate), fallbackRate: l.fallbackRate === null ? null : round(l.fallbackRate), weight: round(l.weight, 4), blendedRate: round(l.blendedRate), share: round(l.share, 4) })),
+            evidence: p.yield!.evidence,
+          },
+          delay: {
+            source: p.delay.source,
+            pairs: p.delay.pairs,
+            thinSample: p.delay.thinSample,
+            medianHours: round(p.delay.medianHours),
+            p10Hours: round(p.delay.p10Hours),
+            p90Hours: round(p.delay.p90Hours),
+            blend: p.delay.blend.map((l) => ({ level: l.level, pairs: l.pairs, medianHours: round(l.medianHours), weight: round(l.weight, 4), share: round(l.share, 4) })),
+          },
         };
       }),
       targetValue: i.targetValueUsd === null ? null : { usd: i.targetValueUsd, source: "plan_target_value" as const },

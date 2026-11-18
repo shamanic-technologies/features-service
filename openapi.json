@@ -82882,7 +82882,7 @@
                                   "unitsPerUnit": {
                                     "type": "number",
                                     "nullable": true,
-                                    "description": "Units of `toStep` per Unit of `fromStep` (mean of the estimate; × 100 = % Conversion)."
+                                    "description": "THE RATE USED by the projection: Units of `toStep` per Unit of `fromStep` (× 100 = % Conversion). A BLENDED rate (THIN-SAMPLE-BLEND-1118): the plan line's, then what the fleet, the brand and the campaign measured, each blended into the level below by its own cases. Print this one as the rate; `blend` says what it rests on. Never print a level's raw `measuredRate` as the rate used."
                                   },
                                   "median": {
                                     "type": "number",
@@ -82905,7 +82905,76 @@
                                         "brand"
                                       ]
                                     },
-                                    "description": "Finer scopes that hold a sample too thin to stand alone (it only nudges the estimate): say it."
+                                    "description": "Finer scopes that hold evidence but weigh less than `source` in the rate used."
+                                  },
+                                  "pseudoCases": {
+                                    "type": "number",
+                                    "description": "The fixed strength of a fallback, in cases (10): a level's own measurement weighs cases-it-could-expect / (those + 10) against the level below. 3 cases barely move it, 10 weigh half, 100 weigh 91%."
+                                  },
+                                  "blend": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "level": {
+                                          "type": "string",
+                                          "enum": [
+                                            "campaign",
+                                            "brand",
+                                            "fleet",
+                                            "plan",
+                                            "default"
+                                          ],
+                                          "description": "Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default."
+                                        },
+                                        "cases": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "Units of `toStep` this level adds that the finer levels do not hold (the fleet without the brand, the brand without the campaign); null on the plan line."
+                                        },
+                                        "exposure": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "The `fromStep` Units those cases were counted over (censored by age); null on the plan line."
+                                        },
+                                        "measuredRate": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "The level's own RAW rate (cases / exposure; the plan line's stated rate). Not the rate used."
+                                        },
+                                        "fallbackRate": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "The blended rate of the level below: what this level falls back on; null = nothing below."
+                                        },
+                                        "weight": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "Share of this level's own measurement in ITS blended rate (0 = the fallback alone, 1 = itself alone)."
+                                        },
+                                        "blendedRate": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "The rate after blending at this level; the last level's equals `unitsPerUnit`."
+                                        },
+                                        "share": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "Share of this level's measurement in the rate finally used; the shares sum to 1. `source` = the largest."
+                                        }
+                                      },
+                                      "required": [
+                                        "level",
+                                        "cases",
+                                        "exposure",
+                                        "measuredRate",
+                                        "fallbackRate",
+                                        "weight",
+                                        "blendedRate",
+                                        "share"
+                                      ]
+                                    },
+                                    "description": "The ladder the rate rests on, fallback first (plan line, fleet, brand, campaign): per level its raw measured rate with its cases, the fallback, the weight and the blended rate."
                                   },
                                   "evidence": {
                                     "type": "array",
@@ -82963,6 +83032,8 @@
                                   "p10",
                                   "p90",
                                   "thinnerScopes",
+                                  "pseudoCases",
+                                  "blend",
                                   "evidence"
                                 ]
                               },
@@ -82986,11 +83057,12 @@
                                   },
                                   "thinSample": {
                                     "type": "boolean",
-                                    "description": "Under 10 pairs: the largest sample measured, kept over the default."
+                                    "description": "`source` holds under 10 pairs."
                                   },
                                   "medianHours": {
                                     "type": "number",
-                                    "nullable": true
+                                    "nullable": true,
+                                    "description": "Of the BLENDED curve the projection uses (the default curve, then each measured curve mixed in with the weight pairs / (pairs + 10))."
                                   },
                                   "p10Hours": {
                                     "type": "number",
@@ -82999,6 +83071,51 @@
                                   "p90Hours": {
                                     "type": "number",
                                     "nullable": true
+                                  },
+                                  "blend": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "level": {
+                                          "type": "string",
+                                          "enum": [
+                                            "campaign",
+                                            "brand",
+                                            "fleet",
+                                            "plan",
+                                            "default"
+                                          ],
+                                          "description": "Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default."
+                                        },
+                                        "pairs": {
+                                          "type": "number",
+                                          "description": "Pairs this level adds that the finer levels do not hold (0 on the default)."
+                                        },
+                                        "medianHours": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "The level's own median (the default's assumed 21 days)."
+                                        },
+                                        "weight": {
+                                          "type": "number",
+                                          "nullable": true
+                                        },
+                                        "share": {
+                                          "type": "number",
+                                          "nullable": true,
+                                          "description": "Share of this level's curve in the curve used; `source` = the largest."
+                                        }
+                                      },
+                                      "required": [
+                                        "level",
+                                        "pairs",
+                                        "medianHours",
+                                        "weight",
+                                        "share"
+                                      ]
+                                    },
+                                    "description": "The ladder the delay curve rests on, default first."
                                   }
                                 },
                                 "required": [
@@ -83007,7 +83124,8 @@
                                   "thinSample",
                                   "medianHours",
                                   "p10Hours",
-                                  "p90Hours"
+                                  "p90Hours",
+                                  "blend"
                                 ]
                               }
                             },
