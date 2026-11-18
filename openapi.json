@@ -82805,13 +82805,41 @@
                               "type": "string",
                               "enum": [
                                 "campaign",
+                                "brand",
+                                "fleet",
                                 "plan"
                               ],
-                              "description": "`campaign` = everything it spent ÷ its Units of the first milestone (at least 30); `plan` = the plan line's cost per Target walked back through the yields."
+                              "description": "The level weighing most in the cost used. `campaign` = everything it spent ÷ its Units of the first milestone, from its first Unit; `brand` / `fleet` = the ledger's measured cost of one Unit of that outcome there; `plan` = the plan line's own cost per Unit (its cost per Target ÷ its own Units needed per Target)."
                             },
                             "usdPerUnit": {
                               "type": "number",
-                              "nullable": true
+                              "nullable": true,
+                              "description": "THE COST USED per Unit of the first milestone: the campaign's own, blended with its fallback by its Units (weight = Units / (Units + 10), on the log scale)."
+                            },
+                            "measuredUsdPerUnit": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "The campaign's own measured cost; null = it made no Unit of the first milestone yet."
+                            },
+                            "fallbackUsdPerUnit": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "What it falls back on: a cost of ONE such Unit from its own source, never a cost per Target multiplied by yields measured elsewhere (FORECAST-LEAD-DEALS-1118)."
+                            },
+                            "fallbackSource": {
+                              "type": "string",
+                              "nullable": true,
+                              "enum": [
+                                "brand",
+                                "fleet",
+                                "plan",
+                                null
+                              ]
+                            },
+                            "weight": {
+                              "type": "number",
+                              "nullable": true,
+                              "description": "Share of the campaign's own measurement in the cost used."
                             },
                             "p10": {
                               "type": "number",
@@ -82839,6 +82867,10 @@
                             "label",
                             "source",
                             "usdPerUnit",
+                            "measuredUsdPerUnit",
+                            "fallbackUsdPerUnit",
+                            "fallbackSource",
+                            "weight",
                             "p10",
                             "p90",
                             "spentUsd",
