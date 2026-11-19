@@ -30,6 +30,10 @@ import router from "./outcome-forecast.js";
 import { openApiDocument } from "../lib/openapi.js";
 import { rateEstimateOf } from "../lib/outcome-silver.js";
 
+// The forecast is a Monte Carlo simulation: CPU-bound, 1-3 s per test alone. In the full suite the parallel workers
+// share the CPU and it passed vitest's default 5 s (8 red on a clean main, 2026-11-19). Nothing shared between tests.
+vi.setConfig({ testTimeout: 30_000 });
+
 const app = express().use(router);
 const URL = "/brands/b1/sales-funnel-campaigns/c1/outcome-forecast";
 const campaign = { id: "c1", brandId: "b1", offerId: "o1", salesFunnelId: "f", salesFunnelName: "Wide", status: "ongoing", stopReason: null, createdAt: "2026-01-01T00:00:00Z", units: [{ campaignId: "u1" }, { campaignId: "u2" }], target: "t_c" };
