@@ -19,12 +19,11 @@ import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script
 import { readCurrentSilverSweep } from "../lib/outcome-silver-io.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { listEngineStrategyChanges } from "../lib/engine-strategy-io.js";
-import { readCampaignCapChanges, readCampaignChangeHistory, readCampaignVersionReach, readDownstreamSteps } from "../lib/campaign-change-log-io.js";
+import { readCampaignCapChanges, readCampaignChangeHistory, readCampaignVersionReach, readFleetTransitions } from "../lib/campaign-change-log-io.js";
 import {
   addDays,
   campaignChangeEventsOf,
   campaignChangesOf,
-  CAMPAIGN_ENGINE_SPAN_DAYS,
   CHANGE_KINDS,
   CHANGE_LOG_RULE,
   MAX_WINDOW_DAYS,
@@ -39,7 +38,7 @@ import {
   TRIED_SHARE,
   VERDICT_THRESHOLDS,
   WINDOW_MATURITY_MULTIPLE,
-  type DownstreamStep,
+  type FleetTransition,
   type ServedChange,
 } from "../lib/campaign-change-log.js";
 import { BLEND_PSEUDO_CASES } from "../lib/outcome-forecast.js";
@@ -63,7 +62,6 @@ export const CHANGE_LOG_RULES = {
   windowMaturityMultiple: WINDOW_MATURITY_MULTIPLE,
   minWindowDays: MIN_WINDOW_DAYS,
   maxWindowDays: MAX_WINDOW_DAYS,
-  campaignEngineSpanDays: CAMPAIGN_ENGINE_SPAN_DAYS,
   blendPseudoCases: BLEND_PSEUDO_CASES,
   thinCases: THIN_CASES,
   thinDecisions: THIN_DECISIONS,
@@ -77,12 +75,12 @@ export async function computeCampaignChanges(row: SalesFunnelCampaignRow, header
   const [history, caps] = await Promise.all([readCampaignChangeHistory(row, owner), readCampaignCapChanges(row, owner)]);
   const unitIds = [...new Set([...history.units.map((u) => u.campaignId), ...row.units.map((u) => u.campaignId)])];
   const since = addDays(row.createdAt.slice(0, 10), -READ_BEFORE_BIRTH_DAYS);
-  const [reach, scripts, labels, downstream, strategies, plays] = await Promise.all([
+  const [reach, scripts, labels, transitions, strategies, plays] = await Promise.all([
     readCampaignVersionReach(unitIds, since),
     readRunnableScriptsForCatalogue(),
     listOutcomeLabels(),
     // No sweep on today's rule = no measured step to read: every change says so.
-    silverComputedAt === null ? Promise.resolve((): DownstreamStep | null => null) : readDownstreamSteps(),
+    silverComputedAt === null ? Promise.resolve([] as FleetTransition[]) : readFleetTransitions(),
     listEngineStrategyChanges(unitIds),
     loadPlayCatalogue(),
   ]);
@@ -91,7 +89,7 @@ export async function computeCampaignChanges(row: SalesFunnelCampaignRow, header
   const changes = campaignChangesOf({
     rows: reach.rows,
     campaignEvents,
-    downstream,
+    transitions,
     today: now.toISOString().slice(0, 10),
     scriptLabel: (d) => names.get(d) ?? null,
     strategyLabel: (id) => plays.strategies.get(id)?.name ?? null,

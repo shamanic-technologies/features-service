@@ -11,7 +11,7 @@ import { readRunsLedgerJson } from "./runs-ledger-read.js";
 import { readSilverStats } from "./outcome-silver-io.js";
 import { FLEET_SCOPE_ID } from "./outcome-silver.js";
 import { fetchWithRetry } from "./fetch-retry.js";
-import { nearestDownstreamOf, type CapChangeRecord, type DownstreamStep, type PlanChangeRecord, type ScriptDayRow, type SettingChangeRecord, type StatusTransitionRecord } from "./campaign-change-log.js";
+import { type CapChangeRecord, type FleetTransition, type PlanChangeRecord, type ScriptDayRow, type SettingChangeRecord, type StatusTransitionRecord } from "./campaign-change-log.js";
 import type { SalesFunnelCampaignRow } from "./sales-funnel-campaigns-client.js";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -19,15 +19,16 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 /** PURE. runs-service's script-reach body grouped by version, as one row per script version and day. FAIL-LOUD. */
 export function parseVersionReach(body: unknown): { builtAt: string; rows: ScriptDayRow[] } {
   if (!isRecord(body) || !Array.isArray(body.groups) || typeof body.builtAt !== "string") throw new Error("[features-service] campaign changes: script-reach served no groups or no builtAt");
-  const merged = new Map<string, { engine: string; dynasty: string; version: string; day: string; decisions: number; reached: Record<string, number> }>();
+  const merged = new Map<string, { engine: string; dynasty: string; version: string; day: string; decisions: number; reached: Record<string, number>; produced: Record<string, number> }>();
   for (const g of body.groups) {
     if (!isRecord(g) || typeof g.scriptSlug !== "string" || typeof g.day !== "string" || typeof g.runs !== "number" || !Array.isArray(g.reachedOutcomes) || !Array.isArray(g.producedOutcomes)) throw new Error("[features-service] campaign changes: a script-reach group lacks scriptSlug, day, runs or its outcomes");
     const parts = g.scriptSlug.split("/");
     if (parts.length !== 3 || parts.some((p) => p === "")) throw new Error(`[features-service] campaign changes: ${JSON.stringify(g.scriptSlug)} is not <outcome>/<dynasty>/<version>`);
     const [engine, dynasty, version] = parts as [string, string, string];
     const k = `${g.scriptSlug}\u0000${g.day}`;
-    const row = merged.get(k) ?? merged.set(k, { engine, dynasty, version, day: g.day, decisions: 0, reached: {} }).get(k)!;
+    const row = merged.get(k) ?? merged.set(k, { engine, dynasty, version, day: g.day, decisions: 0, reached: {}, produced: {} }).get(k)!;
     row.decisions += g.runs;
+    for (const o of new Set(g.producedOutcomes.filter((x): x is string => typeof x === "string"))) row.produced[o] = (row.produced[o] ?? 0) + g.runs;
     for (const o of new Set([...g.reachedOutcomes, ...g.producedOutcomes].filter((x): x is string => typeof x === "string" && x !== engine))) row.reached[o] = (row.reached[o] ?? 0) + g.runs;
   }
   return { builtAt: body.builtAt, rows: [...merged.values()] };
@@ -40,15 +41,14 @@ export async function readCampaignVersionReach(unitCampaignIds: readonly string[
   return parseVersionReach(await readRunsLedgerJson(`/internal/stats/outcome-chains/script-reach?groupBy=version&campaignIds=${ids.map(encodeURIComponent).join(",")}&since=${since}`, 60_000));
 }
 
-/** Each Engine's nearest downstream step with volume, read off Silver's stored fleet transitions. */
-export async function readDownstreamSteps(): Promise<(engine: string) => DownstreamStep | null> {
-  const transitions = [];
+/** Silver's stored fleet transitions with a measured delay (the steps a change can be measured on, and their delays). */
+export async function readFleetTransitions(): Promise<FleetTransition[]> {
+  const out: FleetTransition[] = [];
   for (const r of await readSilverStats("fleet", FLEET_SCOPE_ID)) {
     if (r.body.kind !== "transition" || r.body.stat.delay === null) continue;
-    transitions.push({ fromKey: r.fromKey, toKey: r.toKey, pairs: r.body.stat.delay.n, medianHours: r.body.stat.delay.medianHours, p90Hours: r.body.stat.delay.p90Hours });
+    out.push({ fromKey: r.fromKey, toKey: r.toKey, pairs: r.body.stat.delay.n, medianHours: r.body.stat.delay.medianHours, p90Hours: r.body.stat.delay.p90Hours });
   }
-  const best = nearestDownstreamOf(transitions);
-  return (engine) => best.get(engine) ?? null;
+  return out;
 }
 
 export interface CampaignChangeHistory {

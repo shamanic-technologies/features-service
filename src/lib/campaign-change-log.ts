@@ -20,15 +20,17 @@
  *    follows-its-plan (campaign-service; brief and Target recorded since 2026-11-19), and the strategy kept per Engine
  *    (ours, recorded since 2026-11-19).
  *
- * THE MEASURED RESULT, one rule. Each change is measured on ONE Engine: its own; a campaign-wide change on the Engine
- * of the campaign that ran the most decisions in the 28 days around it. The STEP = the nearest downstream step of that
- * Engine with volume: of the transitions out of it Silver measured fleet-wide on at least `MIN_STEP_PAIRS` (10) linked
- * pairs, the one with the shortest median delay. Rate = decisions whose chain reached the step ÷ decisions, on the
- * decisions the change could affect: the changed script's own for a script change (the new dynasty or version after,
- * what it replaced before; the others after a dynasty stopped), the Engine's whole for a campaign or strategy change.
- * WINDOWS are sized by the step's delay: maturity = its fleet p90 delay in whole days; window = 2 × maturity, from 7 to
- * 28 days, cut at the next / previous change of the same track (the Engine for its scripts and strategy, the campaign
- * for campaign-wide changes). CENSORING like Silver, by day: a decision day counts once it is `maturity` days old.
+ * THE MEASURED RESULT, one rule. The STEP of an Engine: from its own key and every ledger key its decisions PRODUCED
+ * (an Engine's Units may be keyed another way in the ledger: read off the decisions, never a table), Silver's fleet
+ * transitions out of them measured on at least `MIN_STEP_PAIRS` (10) linked pairs whose maturity fits `MAX_WINDOW_DAYS`
+ * (a client reads it within weeks), the shortest median delay. A change on an Engine is measured on that Engine; a
+ * campaign-wide change on the campaign's Engine whose step holds the most MATURED cases in its windows (none = said).
+ * Rate = decisions whose chain reached the step ÷ decisions, on the decisions the change could affect: the changed
+ * script's own for a script change (the new dynasty or version after, what it replaced before; the others after a
+ * dynasty stopped), the Engine's whole for a campaign or strategy change. WINDOWS are sized by the step's delay:
+ * maturity = its fleet p90 delay in whole days; window = 2 × maturity, from 7 to 28 days, cut at the next / previous
+ * change of the same track (the Engine for its scripts and strategy, the campaign for campaign-wide changes).
+ * CENSORING like Silver, by day: a decision day counts once it is `maturity` days old.
  *
  * THE VERDICT. Each side's rate is BLENDED like every thin sample of ours (Gamma-Poisson, prior = both sides pooled at
  * `BLEND_PSEUDO_CASES` (10) cases), and P(after > before) is exact (a regularized incomplete beta).
@@ -52,12 +54,11 @@ export const MIN_STEP_PAIRS = MIN_DELAY_PAIRS;
 export const WINDOW_MATURITY_MULTIPLE = 2;
 export const MIN_WINDOW_DAYS = 7;
 export const MAX_WINDOW_DAYS = 28;
-export const CAMPAIGN_ENGINE_SPAN_DAYS = 28;
 export const THIN_CASES = 10;
 export const THIN_DECISIONS = 30;
 export const VERDICT_THRESHOLDS = { worked: 0.9, partial: 0.7, didNotWork: 0.3 } as const;
 /** Bump when a rule here changes what a stored list means: it is in the cell's key. */
-export const CHANGE_LOG_RULE = "2026-11-19.2";
+export const CHANGE_LOG_RULE = "2026-11-19.3";
 
 /** The decisions one script version ran for the campaign on one UTC day, and how many reached each outcome. */
 export interface ScriptDayRow {
@@ -69,6 +70,8 @@ export interface ScriptDayRow {
   decisions: number;
   /** outcome -> decisions whose chain reached it (the Engine's own outcome left out). */
   reached: Readonly<Record<string, number>>;
+  /** outcome -> decisions that PRODUCED it, as the ledger keys it (an Engine's Units may carry another key than its name). */
+  produced: Readonly<Record<string, number>>;
 }
 
 export const CHANGE_KINDS = [
@@ -441,7 +444,7 @@ export function probabilityAfterIsBetter(before: { cases: number; decisions: num
 }
 
 export type Verdict = "worked" | "partial" | "did_not_work" | "inconclusive" | "too_early" | "confounded";
-export type VerdictReason = "no_downstream_step_measured" | "no_decisions_after" | "nothing_before_to_compare" | "thin_evidence" | "after_window_not_matured" | "another_change_in_the_window" | "tested";
+export type VerdictReason = "no_downstream_step_measured" | "step_slower_than_window" | "no_step_readable_within_window" | "no_decisions_after" | "nothing_before_to_compare" | "thin_evidence" | "after_window_not_matured" | "another_change_in_the_window" | "tested";
 
 export interface WindowStat {
   /** First and last UTC day counted (matured days only); null = none. */
@@ -489,86 +492,118 @@ const windowOf = (rows: readonly ScriptDayRow[], step: string): WindowStat => {
   return { fromDay: days[0] ?? null, toDay: days[days.length - 1] ?? null, decisions, cases, rate: decisions > 0 ? cases / decisions : null };
 };
 
-/**
- * PURE. Each Engine's nearest downstream step with volume, from Silver's fleet transitions (from, to, linked pairs,
- * delay): of the steps out of the Engine measured on at least `MIN_STEP_PAIRS` pairs, the shortest median delay (then
- * the most pairs, then the key).
- */
-export function nearestDownstreamOf(transitions: ReadonlyArray<{ fromKey: string; toKey: string; pairs: number; medianHours: number; p90Hours: number }>): Map<string, DownstreamStep> {
-  const best = new Map<string, DownstreamStep>();
-  for (const t of transitions) {
-    if (t.pairs < MIN_STEP_PAIRS || t.fromKey === t.toKey) continue;
-    const was = best.get(t.fromKey);
-    const cand: DownstreamStep = { step: t.toKey, pairs: t.pairs, medianHours: t.medianHours, p90Hours: t.p90Hours };
-    if (!was || cand.medianHours < was.medianHours || (cand.medianHours === was.medianHours && (cand.pairs > was.pairs || (cand.pairs === was.pairs && cand.step < was.step)))) best.set(t.fromKey, cand);
-  }
-  return best;
+export interface FleetTransition {
+  fromKey: string;
+  toKey: string;
+  pairs: number;
+  medianHours: number;
+  p90Hours: number;
 }
 
 /** PURE. A step's delay in whole days (at least one), and the window it sizes. */
-export const maturityDaysOf = (s: DownstreamStep) => Math.max(1, Math.ceil(s.p90Hours / 24));
+export const maturityDaysOf = (s: Pick<DownstreamStep, "p90Hours">) => Math.max(1, Math.ceil(s.p90Hours / 24));
 export const windowDaysOf = (maturityDays: number) => Math.min(MAX_WINDOW_DAYS, Math.max(MIN_WINDOW_DAYS, WINDOW_MATURITY_MULTIPLE * maturityDays));
+
+/** PURE. Per Engine, the ledger keys its own decisions PRODUCED (read off the decisions, never a table keyed on a name). */
+export function ledgerKeysOf(rows: readonly ScriptDayRow[]): Map<string, string[]> {
+  const out = new Map<string, Map<string, number>>();
+  for (const r of rows) {
+    const m = out.get(r.engine) ?? out.set(r.engine, new Map()).get(r.engine)!;
+    for (const [k, n] of Object.entries(r.produced)) if (n > 0) m.set(k, (m.get(k) ?? 0) + n);
+  }
+  return new Map([...out].map(([e, m]) => [e, [...m].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([k]) => k)]));
+}
+
+export type StepPick = { step: DownstreamStep; reason: null } | { step: null; reason: "no_downstream_step_measured" | "step_slower_than_window" };
+
+/**
+ * PURE. The step an Engine's decisions are measured on: the nearest downstream step with volume a client can read
+ * within the window. From-keys = the Engine's own key and every ledger key its decisions produced; candidates = Silver's
+ * fleet transitions out of them measured on at least `MIN_STEP_PAIRS` pairs, to a key that is not one of them; of those
+ * whose maturity (p90 delay in days) fits `MAX_WINDOW_DAYS`, the shortest median delay (then the most pairs, the key).
+ */
+export function engineStepOf(engine: string, ledgerKeys: readonly string[], transitions: readonly FleetTransition[]): StepPick {
+  const from = new Set([engine, ...ledgerKeys]);
+  const candidates = transitions.filter((t) => from.has(t.fromKey) && !from.has(t.toKey) && t.pairs >= MIN_STEP_PAIRS);
+  if (candidates.length === 0) return { step: null, reason: "no_downstream_step_measured" };
+  const readable = candidates.filter((t) => maturityDaysOf(t) <= MAX_WINDOW_DAYS);
+  if (readable.length === 0) return { step: null, reason: "step_slower_than_window" };
+  const best = [...readable].sort((x, y) => x.medianHours - y.medianHours || y.pairs - x.pairs || x.toKey.localeCompare(y.toKey))[0]!;
+  return { step: { step: best.toKey, pairs: best.pairs, medianHours: best.medianHours, p90Hours: best.p90Hours }, reason: null };
+}
 
 const trackOf = (e: ChangeEvent) => e.engine ?? "\u0000campaign";
 
-/** PURE. The Engine a campaign-wide change is measured on: the one that ran the most decisions in the 28 days around it. */
-export function busiestEngineAround(day: string, rows: readonly ScriptDayRow[], measurable: (engine: string) => boolean): string | null {
-  const from = addDays(day, -CAMPAIGN_ENGINE_SPAN_DAYS);
-  const to = addDays(day, CAMPAIGN_ENGINE_SPAN_DAYS);
-  const per = new Map<string, number>();
-  for (const r of rows) if (r.day >= from && r.day < to && measurable(r.engine)) per.set(r.engine, (per.get(r.engine) ?? 0) + r.decisions);
-  return [...per].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]?.[0] ?? null;
-}
-
-/** PURE. The measured result and the verdict of one change. `today` = the UTC day ages are counted to. */
-export function changeResultOf(event: ChangeEvent, events: readonly ChangeEvent[], rows: readonly ScriptDayRow[], downstream: (engine: string) => DownstreamStep | null, today: string): ChangeResult {
-  const engine = event.engine ?? busiestEngineAround(event.day, rows, (e) => downstream(e) !== null);
-  const step = engine === null ? null : downstream(engine);
+/**
+ * PURE. The measured result and the verdict of one change. `stepOf` = the step an Engine is measured on (or why none);
+ * `today` = the UTC day ages are counted to. A change on an Engine is measured on that Engine. A campaign-wide change
+ * is measured on the campaign's Engine whose step holds the most MATURED cases in its windows (then decisions, then
+ * key), among the Engines whose step fits the window; none = inconclusive, never a date months away.
+ */
+export function changeResultOf(event: ChangeEvent, events: readonly ChangeEvent[], rows: readonly ScriptDayRow[], stepOf: (engine: string) => StepPick, today: string): ChangeResult {
   const none = { before: null, after: null, probabilityBetter: null, measuredOn: null, confoundedWith: [] as string[] };
-  if (engine === null || step === null) return { measuredEngine: engine, step: null, maturityDays: null, windowDays: null, ...none, verdict: "inconclusive", verdictReason: "no_downstream_step_measured" };
-  const maturityDays = maturityDaysOf(step);
-  const windowDays = windowDaysOf(maturityDays);
-  // The track's own next / previous change ends the windows: each window holds ONE state of the track.
   const track = trackOf(event);
-  const sameTrack = events.filter((e) => e.id !== event.id && trackOf(e) === track).map((e) => e.day);
-  const nextChange = sameTrack.filter((d) => d > event.day).sort()[0] ?? null;
-  const prevChange = sameTrack.filter((d) => d < event.day).sort().reverse()[0] ?? null;
-  const afterEnd = [addDays(event.day, windowDays), nextChange].filter((d): d is string => d !== null).sort()[0]!; // exclusive
-  const beforeStart = [addDays(event.day, -windowDays), prevChange].filter((d): d is string => d !== null).sort().reverse()[0]!; // inclusive
-  const engineRows = rows.filter((r) => r.engine === engine);
-  const dynastyOf = (side: ChangeSide | null) => (side?.scriptDynasty ? side.scriptDynasty.slice(engine.length + 1) : null);
-  const inAfter = (r: ScriptDayRow) => r.day >= event.day && r.day < afterEnd;
-  const inBefore = (r: ScriptDayRow) => r.day >= beforeStart && r.day < event.day;
-  let after: ScriptDayRow[];
-  let before: ScriptDayRow[];
-  if (event.kind === "script_started") {
-    after = engineRows.filter((r) => inAfter(r) && r.dynasty === dynastyOf(event.to));
-    before = engineRows.filter(inBefore);
-  } else if (event.kind === "script_upgraded") {
-    after = engineRows.filter((r) => inAfter(r) && r.dynasty === dynastyOf(event.to) && r.version === event.to!.version);
-    before = engineRows.filter((r) => inBefore(r) && r.dynasty === dynastyOf(event.from) && r.version === event.from!.version);
-  } else if (event.kind === "script_stopped") {
-    after = engineRows.filter((r) => inAfter(r) && r.dynasty !== dynastyOf(event.from));
-    before = engineRows.filter((r) => inBefore(r) && r.dynasty === dynastyOf(event.from));
-  } else if (event.kind === "scripts_tried") {
-    // The scripts tried that day (those not serving), against the Engine's days before.
-    const serving = new Set<string | null>();
-    for (const e of events) {
-      if (e.engine !== engine || e.day > event.day) continue;
-      if (e.kind === "script_started") serving.add(dynastyOf(e.to));
-      if (e.kind === "script_stopped") serving.delete(dynastyOf(e.from));
+  const measure = (engine: string, step: DownstreamStep) => {
+    const maturityDays = maturityDaysOf(step);
+    const windowDays = windowDaysOf(maturityDays);
+    // The track's own next / previous change ends the windows: each window holds ONE state of the track.
+    const sameTrack = events.filter((e) => e.id !== event.id && trackOf(e) === track).map((e) => e.day);
+    const nextChange = sameTrack.filter((d) => d > event.day).sort()[0] ?? null;
+    const prevChange = sameTrack.filter((d) => d < event.day).sort().reverse()[0] ?? null;
+    const afterEnd = [addDays(event.day, windowDays), nextChange].filter((d): d is string => d !== null).sort()[0]!; // exclusive
+    const beforeStart = [addDays(event.day, -windowDays), prevChange].filter((d): d is string => d !== null).sort().reverse()[0]!; // inclusive
+    const engineRows = rows.filter((r) => r.engine === engine);
+    const dynastyOf = (side: ChangeSide | null) => (side?.scriptDynasty ? side.scriptDynasty.slice(engine.length + 1) : null);
+    const inAfter = (r: ScriptDayRow) => r.day >= event.day && r.day < afterEnd;
+    const inBefore = (r: ScriptDayRow) => r.day >= beforeStart && r.day < event.day;
+    let after: ScriptDayRow[];
+    let before: ScriptDayRow[];
+    if (event.kind === "script_started") {
+      after = engineRows.filter((r) => inAfter(r) && r.dynasty === dynastyOf(event.to));
+      before = engineRows.filter(inBefore);
+    } else if (event.kind === "script_upgraded") {
+      after = engineRows.filter((r) => inAfter(r) && r.dynasty === dynastyOf(event.to) && r.version === event.to!.version);
+      before = engineRows.filter((r) => inBefore(r) && r.dynasty === dynastyOf(event.from) && r.version === event.from!.version);
+    } else if (event.kind === "script_stopped") {
+      after = engineRows.filter((r) => inAfter(r) && r.dynasty !== dynastyOf(event.from));
+      before = engineRows.filter((r) => inBefore(r) && r.dynasty === dynastyOf(event.from));
+    } else if (event.kind === "scripts_tried") {
+      // The scripts tried that day (those not serving), against the Engine's days before.
+      const serving = new Set<string | null>();
+      for (const e of events) {
+        if (e.engine !== engine || e.day > event.day) continue;
+        if (e.kind === "script_started") serving.add(dynastyOf(e.to));
+        if (e.kind === "script_stopped") serving.delete(dynastyOf(e.from));
+      }
+      after = engineRows.filter((r) => r.day === event.day && !serving.has(r.dynasty));
+      before = engineRows.filter(inBefore);
+    } else {
+      // A campaign or strategy change: every decision of the Engine.
+      after = engineRows.filter(inAfter);
+      before = engineRows.filter(inBefore);
     }
-    after = engineRows.filter((r) => r.day === event.day && !serving.has(r.dynasty));
-    before = engineRows.filter(inBefore);
+    const matured = (r: ScriptDayRow) => addDays(r.day, maturityDays) <= today;
+    return { engine, step, maturityDays, windowDays, afterEnd, beforeStart, after, a: windowOf(after.filter(matured), step.step), b: windowOf(before.filter(matured), step.step) };
+  };
+
+  let m: ReturnType<typeof measure>;
+  if (event.engine !== null) {
+    const pick = stepOf(event.engine);
+    if (pick.step === null) return { measuredEngine: event.engine, step: null, maturityDays: null, windowDays: null, ...none, verdict: "inconclusive", verdictReason: pick.reason };
+    m = measure(event.engine, pick.step);
   } else {
-    // A campaign or strategy change: every decision of the Engine.
-    after = engineRows.filter(inAfter);
-    before = engineRows.filter(inBefore);
+    const candidates = [...new Set(rows.map((r) => r.engine))]
+      .sort()
+      .flatMap((e) => {
+        const pick = stepOf(e);
+        return pick.step === null ? [] : [measure(e, pick.step)];
+      });
+    const best = candidates.sort((x, y) => y.a.cases + y.b.cases - (x.a.cases + x.b.cases) || y.a.decisions + y.b.decisions - (x.a.decisions + x.b.decisions) || x.engine.localeCompare(y.engine))[0];
+    if (!best) return { measuredEngine: null, step: null, maturityDays: null, windowDays: null, ...none, verdict: "inconclusive", verdictReason: "no_step_readable_within_window" };
+    m = best;
   }
-  const matured = (r: ScriptDayRow) => addDays(r.day, maturityDays) <= today;
-  const a = windowOf(after.filter(matured), step.step);
-  const b = windowOf(before.filter(matured), step.step);
-  const base = { measuredEngine: engine, step: step.step, maturityDays, windowDays, before: b, after: a };
+  const { a, b, after, afterEnd, beforeStart, maturityDays } = m;
+  const base = { measuredEngine: m.engine, step: m.step.step, maturityDays, windowDays: m.windowDays, before: b, after: a };
   if (a.decisions === 0) {
     const firstAfter = after.map((r) => r.day).sort()[0] ?? null;
     // The whole after window is old enough and holds no decision: nothing ran to measure.
@@ -639,13 +674,17 @@ const STOP_REASON_WORDS: Record<string, string> = {
 export function campaignChangesOf(input: {
   rows: readonly ScriptDayRow[];
   campaignEvents: readonly ChangeEvent[];
-  downstream: (engine: string) => DownstreamStep | null;
+  /** Silver's fleet transitions with a measured delay. */
+  transitions: readonly FleetTransition[];
   today: string;
   scriptLabel: (scriptDynasty: string) => string | null;
   strategyLabel: (strategyId: string) => string | null;
   outcomeLabel: (outcomeKey: string) => string;
 }): ServedChange[] {
   const events = [...scriptChangeEventsOf(input.rows), ...input.campaignEvents].sort(byTime);
+  const keys = ledgerKeysOf(input.rows);
+  const picks = new Map<string, StepPick>();
+  const stepOf = (engine: string) => picks.get(engine) ?? picks.set(engine, engineStepOf(engine, keys.get(engine) ?? [], input.transitions)).get(engine)!;
   const sideOf = (e: ChangeEvent, side: ChangeSide | null): ServedSide | null => {
     if (side === null) return null;
     let label: string;
@@ -659,7 +698,7 @@ export function campaignChangesOf(input: {
   };
   return events
     .map((e): ServedChange => {
-      const result = changeResultOf(e, events, input.rows, input.downstream, input.today);
+      const result = changeResultOf(e, events, input.rows, stepOf, input.today);
       const engine = e.engine === null ? null : { outcomeKey: e.engine, label: input.outcomeLabel(e.engine) };
       const from = sideOf(e, e.from);
       const to = sideOf(e, e.to);
