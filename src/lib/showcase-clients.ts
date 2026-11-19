@@ -42,10 +42,10 @@
  */
 import type { BrandSnapshotRow } from "./fleet-return-store.js";
 import type { FunnelStepBreakdown } from "./funnel-steps.js";
-import type { ShowcaseBrandFunnels } from "./showcase-funnels.js";
+import type { ShowcaseBrandFunnels, ShowcaseCostUnavailableReason } from "./showcase-funnels.js";
 import { funnelLeg } from "./funnel-legs.js";
 import { ledgerKeysOfStep } from "./ledger-counts.js";
-import { scopeOutcomeLedgerRowOf, type OtherFactory } from "./scope-outcome-ledger.js";
+import { scopeOutcomeLedgerRowOf, type OtherFactory, type ScopeOutcomeLedgerInput } from "./scope-outcome-ledger.js";
 
 /** How many clients the group names: the homepage shows three. */
 export const SHOWCASE_GROUP_SIZE = 3;
@@ -168,27 +168,55 @@ export function withMeetingFactCandidates(candidates: readonly ShowcaseCandidate
 }
 
 /**
- * PURE: one walked brand with its meetings booked = its ledger meeting Units, on its hero counts AND on every chain rung
- * landing on Meeting booked (so the card, the chain and the pick state ONE figure). A rung's cost is recomputed on the
- * same committed spend; a rung whose money is withheld stays null.
+ * SHOWCASE-COST-PER-MEETING-1119: what ONE booked meeting OUR factory made cost, off the brand's own ledger (the row its
+ * dashboard prints), never the brand's whole spend over every meeting. Doctrine (agent-config `cost-accounting`, IAS 2): a
+ * meeting another factory made (the client's own team / CRM, or with no proof of ours) carries none of our cost, so the
+ * cost divides OUR meeting Units only, at the ledger's every-path unit cost (each meeting carries the replies, sends and
+ * leads it needed); a brand whose meetings are all theirs states `no_unit_of_ours_yet`, never a number nor a silent null.
+ * Prod 2026-11-19 (vendor basis): Doc Dinners 173 meetings = 10 ours ($252 each) + 163 theirs (served null: the engine's own
+ * rung had no meeting); Legistai 14 = 0 ours (served $2.53 = its $35 of spend over 14 meetings it never caused);
+ * Shockwave 5 = 0 ours (served null).
  */
-export function withMeetingFacts<W extends { entry: ShowcaseBrandFunnels; heroCounts: { meetingsBooked: number | null; committedSpentCents: number | null } | null }>(
+export interface ShowcaseMeetingCost {
+  ourPeopleReached: number | null;
+  otherFactoryPeopleReached: number | null;
+  costPerReachUsd: number | null;
+  costPerReachUnavailableReason: ShowcaseCostUnavailableReason | null;
+}
+
+/** PURE. The brand's ledger (vendor basis) → its meeting cost; null ledger = unreadable; money withheld = vendor cost unknown. */
+export function showcaseMeetingCostOf(ledger: ScopeOutcomeLedgerInput | null, moneyWithheld: boolean): ShowcaseMeetingCost {
+  if (ledger === null) {
+    return { ourPeopleReached: null, otherFactoryPeopleReached: null, costPerReachUsd: null, costPerReachUnavailableReason: "ledger_unreadable" };
+  }
+  const row = scopeOutcomeLedgerRowOf(ledgerKeysOfStep(SHOWCASE_MEETING_STEP), ledger);
+  const counts = { ourPeopleReached: row.ourUnits, otherFactoryPeopleReached: row.otherFactoryUnits?.total ?? null };
+  if (row.costPerUnitUsd !== null && !moneyWithheld) return { ...counts, costPerReachUsd: row.costPerUnitUsd, costPerReachUnavailableReason: null };
+  const reason = (moneyWithheld && row.costPerUnitUsd !== null ? "vendor_cost_unknown" : row.costPerUnitUnavailableReason ?? row.unitsUnavailableReason) as ShowcaseCostUnavailableReason | null;
+  if (reason === null) throw new Error("[features-service] showcase: a meeting ledger row states no cost and no reason");
+  return { ...counts, costPerReachUsd: null, costPerReachUnavailableReason: reason };
+}
+
+/**
+ * PURE: one walked brand with its meetings booked = its ledger meeting Units, on its hero counts AND on every chain rung
+ * landing on Meeting booked (so the card, the chain and the pick state ONE figure). The rung's cost is the ledger's cost of
+ * OUR meetings (`showcaseMeetingCostOf`), never the brand's spend over every meeting (SHOWCASE-COST-PER-MEETING-1119).
+ */
+export function withMeetingFacts<W extends { entry: ShowcaseBrandFunnels; heroCounts: { meetingsBooked: number | null; committedSpentCents: number | null; meetingCost?: ShowcaseMeetingCost | null } | null }>(
   walked: W,
   meetings: number,
+  meetingCost: ShowcaseMeetingCost,
 ): W {
   if (!walked.entry.measured) return walked;
-  const spent = walked.heroCounts?.committedSpentCents ?? null;
-  const cost = (prior: number | null): number | null =>
-    prior === null || spent === null || spent <= 0 || meetings <= 0 ? null : spent / 100 / meetings;
   return {
     ...walked,
-    heroCounts: walked.heroCounts ? { ...walked.heroCounts, meetingsBooked: meetings } : walked.heroCounts,
+    heroCounts: walked.heroCounts ? { ...walked.heroCounts, meetingsBooked: meetings, meetingCost } : walked.heroCounts,
     entry: {
       ...walked.entry,
       funnels: walked.entry.funnels.map((f) => ({
         ...f,
         steps: f.steps.map((s) =>
-          funnelLeg(s.key)?.toStep.key === "meeting_booked" ? { ...s, peopleReached: meetings, costPerReachUsd: cost(s.costPerReachUsd) } : s,
+          funnelLeg(s.key)?.toStep.key === "meeting_booked" ? { ...s, peopleReached: meetings, ...meetingCost } : s,
         ),
       })),
     },

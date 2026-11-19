@@ -38,6 +38,17 @@ vi.mock("../lib/fleet-cell-store.js", () => ({
   storeFleetCell: async (key: string, text: string, computedAt: number) => void cells.set(key, { text, computedAt }),
 }));
 beforeEach(() => cells.clear());
+// SHOWCASE-COST-PER-MEETING-1119: each walked brand's OWN ledger (vendor basis) prices a booked meeting on OUR meetings only.
+// The suite states it per case (`meetingLedgerOf`, set by `mockFetch`); null = the ledger read fails.
+const meetingLedger = vi.hoisted(() => ({ of: (_brandId: string): unknown => null as unknown }));
+vi.mock("../lib/scope-outcome-ledger-io.js", async (orig) => ({
+  ...(await orig<object>()),
+  fetchBrandOutcomeLedger: async (brandId: string) => {
+    const l = meetingLedger.of(brandId);
+    if (l === null) throw new Error(`ledger of ${brandId} unreadable (test)`);
+    return l;
+  },
+}));
 vi.mock("../lib/env.js", () => ({ validateRequiredEnv: vi.fn(), REQUIRED_ENV: [] }));
 vi.mock("../instrument.js", () => ({}));
 vi.mock("@sentry/node", () => ({
@@ -224,6 +235,11 @@ interface Fixture {
   extraLedgerMeetings?: Record<string, Array<{ factory: "ours" | "another_factory" | "no_proof"; day: string; n: number }>>;
   /** brand ids whose brand-service record states OUR domain (distribute.you). */
   ourBrands?: string[];
+  /**
+   * SHOWCASE-COST-PER-MEETING-1119: a brand's ledger meeting cost, ours vs another factory's Units and the every-path unit
+   * cost. Default: the fleet ledger's Units above (ours / theirs), priced at the vendor spend ÷ our Units. `null` = unreadable.
+   */
+  meetingLedger?: Record<string, { ours: number; theirs: number; unitCostUsd: number | null } | null>;
 }
 
 /** One stored row of the persisted fleet snapshot — what the pick has to work with. */
@@ -241,6 +257,27 @@ function mockFetch(fixture: Fixture): void {
 
   const brandOf = (q: URLSearchParams, headers: Headers | undefined): string =>
     q.get("brandId") ?? headers?.get("x-brand-id") ?? "";
+
+  meetingLedger.of = (brandId: string) => {
+    const stated = fixture.meetingLedger?.[brandId];
+    const extra = fixture.extraLedgerMeetings?.[brandId] ?? [];
+    const sum = (f: (u: { factory: string }) => boolean) => extra.filter(f).reduce((a, u) => a + u.n, 0);
+    const ours = Math.max(0, (fixture.brands[brandId]?.stated?.meeting_booked?.length ?? 0) + sum((u) => u.factory === "ours"));
+    const vendorUsd = (fixture.vendorSpendCents ?? fixture.spendCents ?? 10000) / 100;
+    const l = stated === undefined ? { ours, theirs: Math.max(0, sum((u) => u.factory !== "ours")), unitCostUsd: ours > 0 && vendorUsd > 0 ? vendorUsd / ours : null } : stated;
+    if (l === null) return null;
+    return {
+      producedByDay: new Map(l.ours > 0 ? [["meeting_booked", new Map([["2026-01-01", l.ours]])]] : []),
+      elsewhereByDay: new Map(l.theirs > 0 ? [["meeting_booked", new Map([["2025-01-01", new Map([["another_factory", l.theirs]])]])]] : []),
+      ownCostUsd: new Map(),
+      unitCosts: new Map(l.unitCostUsd === null ? [] : [["meeting_booked", { unitCostUsd: l.unitCostUsd }]]),
+      undeclaredConsumptions: new Map(),
+      fleetProducers: new Map([["meeting_booked", ["lead-service"]]]),
+      fleetProducersKnown: true,
+      daysMissing: [],
+      today: "2026-11-19",
+    };
+  };
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const raw =
@@ -1102,6 +1139,35 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
     expect(twin.outcomes.find((o) => o.key === "meeting_attended")?.peopleReached).toBe(2);
   });
 
+  // SHOWCASE-COST-PER-MEETING-1119 (owner 2026-11-19: « donne le prix par booking en prio quand tu l'as »): a booked meeting is
+  // priced on OUR meetings off the brand's ledger; another factory's meetings carry none of our cost and say so.
+  it("a client whose meetings were all made by another factory serves no meeting cost, and says why", async () => {
+    mockFetch({ ...BASE, extraLedgerMeetings: { [DOC]: [{ factory: "no_proof", day: "2025-03-01", n: 13 }] }, meetingLedger: { [DOC]: { ours: 0, theirs: 14, unitCostUsd: null } } });
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    const twin = res.body.brands.find((b: { brand: { id: string } }) => b.brand.id === DOC);
+    expect(twin.outcomes.find((o: { key: string }) => o.key === "meeting_booked")).toMatchObject({
+      peopleReached: 14,
+      ourPeopleReached: 0,
+      otherFactoryPeopleReached: 14,
+      costPerReachUsd: null,
+      costPerReachUnavailableReason: "no_unit_of_ours_yet",
+    });
+  });
+
+  it("a client with meetings of ours is priced on them alone", async () => {
+    mockFetch({ ...BASE, extraLedgerMeetings: { [DOC]: [{ factory: "another_factory", day: "2025-03-01", n: 9 }] }, meetingLedger: { [DOC]: { ours: 1, theirs: 9, unitCostUsd: 80 } } });
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    const twin = res.body.brands.find((b: { brand: { id: string } }) => b.brand.id === DOC);
+    expect(twin.outcomes.find((o: { key: string }) => o.key === "meeting_booked")).toMatchObject({ peopleReached: 10, ourPeopleReached: 1, costPerReachUsd: 80, costPerReachUnavailableReason: null });
+  });
+
+  it("a brand ledger that cannot be read names it on the meeting cost, the client keeps its seat and counts", async () => {
+    mockFetch({ ...BASE, meetingLedger: { [DOC]: null } });
+    const res = await request(app).get("/public/stats/showcase-outcomes");
+    const twin = res.body.brands.find((b: { brand: { id: string } }) => b.brand.id === DOC);
+    expect(twin.outcomes.find((o: { key: string }) => o.key === "meeting_booked")).toMatchObject({ peopleReached: 1, costPerReachUsd: null, costPerReachUnavailableReason: "ledger_unreadable" });
+  });
+
   it("every walked client failing to read is a failure, never a cached empty row (lead-service down, 2026-10-29)", async () => {
     const down = Object.fromEntries(Object.entries(BASE.brands).map(([id, b]) => [id, { ...b, campaignsFail: true }]));
     mockFetch({ ...BASE, brands: down, memberships: Object.keys(BASE.brands) });
@@ -1130,7 +1196,13 @@ describe("GET /public/stats/showcase-outcomes (wave C4)", () => {
       expect(Object.keys(b).filter((k) => k !== "vendorCost").sort()).toEqual(["brand", "funnels", "measured", "unmeasuredReason"]);
       for (const f of b.funnels) {
         expect(Object.keys(f).sort()).toEqual(["funnelKey", "funnelName", "steps"]);
-        for (const s of f.steps) expect(Object.keys(s).sort()).toEqual(["costPerReachUsd", "key", "label", "peopleReached"]);
+        // SHOWCASE-COST-PER-MEETING-1119: the Meeting booked rung adds our / another factory's Units and the no-cost reason.
+        for (const s of f.steps)
+          expect(Object.keys(s).sort()).toEqual(
+            s.key.endsWith("_to_meeting_booked")
+              ? ["costPerReachUnavailableReason", "costPerReachUsd", "key", "label", "otherFactoryPeopleReached", "ourPeopleReached", "peopleReached"]
+              : ["costPerReachUsd", "key", "label", "peopleReached"],
+          );
       }
     }
   });
