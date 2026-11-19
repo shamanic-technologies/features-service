@@ -7,13 +7,14 @@ import {
   campaignChangesOf,
   capWords,
   changeResultOf,
-  nearestDownstreamOf,
+  engineStepOf,
+  ledgerKeysOf,
   probabilityAfterIsBetter,
   regularizedBeta,
   scriptChangeEventsOf,
   windowDaysOf,
   type ChangeEvent,
-  type DownstreamStep,
+  type StepPick,
   type ScriptDayRow,
 } from "./campaign-change-log.js";
 import { parseChangeHistory, parseVersionReach } from "./campaign-change-log-io.js";
@@ -22,12 +23,14 @@ import { strategyChangeOf } from "./engine-strategy-io.js";
 // Made-up Engines, scripts and steps on purpose: the rules know none.
 const day = (n: number) => new Date(Date.UTC(2026, 0, n)).toISOString().slice(0, 10);
 const at = (n: number, hh = "12:00") => `${day(n)}T${hh}:00.000Z`;
-const row = (engine: string, dynasty: string, version: string, n: number, decisions: number, reached: Record<string, number> = {}): ScriptDayRow => ({ engine, dynasty, version, day: day(n), decisions, reached });
+const row = (engine: string, dynasty: string, version: string, n: number, decisions: number, reached: Record<string, number> = {}, produced: Record<string, number> = {}): ScriptDayRow => ({ engine, dynasty, version, day: day(n), decisions, reached, produced });
 const span = (from: number, to: number, f: (n: number) => ScriptDayRow[]) => Array.from({ length: to - from + 1 }, (_, k) => f(from + k)).flat();
 const TODAY = day(90);
 /** alpha's nearest step is beta, 48 h at p90: maturity 2 days, window 7 days. */
-const twoDays = (engine: string): DownstreamStep | null => (engine === "alpha" ? { step: "beta", pairs: 50, medianHours: 20, p90Hours: 48 } : engine === "gamma" ? { step: "beta", pairs: 50, medianHours: 20, p90Hours: 48 } : null);
-const fiveDays = (engine: string): DownstreamStep | null => (engine === "alpha" ? { step: "beta", pairs: 50, medianHours: 50, p90Hours: 120 } : null);
+const pick = (p90Hours: number) => ({ step: { step: "beta", pairs: 50, medianHours: 20, p90Hours }, reason: null }) as StepPick;
+const unmeasured: StepPick = { step: null, reason: "no_downstream_step_measured" };
+const twoDays = (engine: string): StepPick => (engine === "alpha" || engine === "gamma" ? pick(48) : unmeasured);
+const fiveDays = (engine: string): StepPick => (engine === "alpha" ? pick(120) : unmeasured);
 
 describe("scriptChangeEventsOf: what counts as a change (CAMPAIGN-CHANGE-LOG-1119)", () => {
   it("100 scripts tried in one day are a handful of lines: one for the trial, none per script", () => {
@@ -149,16 +152,33 @@ describe("the measured result and the verdict", () => {
   });
 });
 
-describe("nearestDownstreamOf: the step a change is measured on", () => {
-  it("the shortest median delay among the transitions out of the Engine with at least 10 pairs", () => {
-    const best = nearestDownstreamOf([
-      { fromKey: "alpha", toKey: "far", pairs: 500, medianHours: 90, p90Hours: 200 },
-      { fromKey: "alpha", toKey: "near", pairs: 40, medianHours: 10, p90Hours: 30 },
-      { fromKey: "alpha", toKey: "thin", pairs: 9, medianHours: 1, p90Hours: 2 },
-      { fromKey: "beta", toKey: "beta", pairs: 99, medianHours: 1, p90Hours: 2 },
-    ]);
-    expect(best.get("alpha")).toEqual({ step: "near", pairs: 40, medianHours: 10, p90Hours: 30 });
-    expect(best.has("beta")).toBe(false);
+describe("engineStepOf: the step a change is measured on (CAMPAIGN-CHANGE-LOG-FIX-1119)", () => {
+  const t = (fromKey: string, toKey: string, pairs: number, medianHours: number, p90Hours: number) => ({ fromKey, toKey, pairs, medianHours, p90Hours });
+  it("an Engine whose Units the ledger keys another way is measured from the key its decisions PRODUCED", () => {
+    const rows = [row("sent", "main", "v1", 1, 40, {}, { delivered: 40 }), row("sent", "main", "v1", 2, 10, {}, { delivered: 9, sent: 1 })];
+    const keys = ledgerKeysOf(rows);
+    expect(keys.get("sent")).toEqual(["delivered", "sent"]);
+    const transitions = [t("delivered", "clicked", 800, 1, 10), t("delivered", "sent", 50, 0, 1)];
+    expect(engineStepOf("sent", keys.get("sent")!, transitions)).toEqual({ step: { step: "clicked", pairs: 800, medianHours: 1, p90Hours: 10 }, reason: null });
+    expect(engineStepOf("sent", [], transitions)).toEqual({ step: null, reason: "no_downstream_step_measured" });
+  });
+  it("the nearest step a client can read within the window: a faster median whose p90 passes 28 days is skipped", () => {
+    const transitions = [t("alpha", "pool", 70000, 0, 71 * 24), t("alpha", "click", 800, 140, 24 * 24), t("alpha", "thin", 9, 1, 2)];
+    expect(engineStepOf("alpha", [], transitions).step?.step).toBe("click");
+    expect(engineStepOf("alpha", [], transitions.slice(0, 1))).toEqual({ step: null, reason: "step_slower_than_window" });
+  });
+});
+
+describe("a campaign-wide change (CAMPAIGN-CHANGE-LOG-FIX-1119)", () => {
+  const stop: ChangeEvent = { id: "budget:1", at: at(15), day: day(15), kind: "budget_changed", engine: null, from: null, to: null, share: null, tried: null, who: "a_person", whoEvidence: null, reason: null, parts: null };
+  it("is measured on the Engine whose step holds the most matured cases, never the busiest one", () => {
+    const rows = [...span(1, 28, (n) => [row("busy", "main", "v1", n, 1000, { far: 1 }), row("alpha", "main", "v1", n, 100, { beta: 10 })])];
+    const stepOf = (e: string): StepPick => (e === "alpha" ? pick(48) : e === "busy" ? { step: { step: "far", pairs: 50, medianHours: 1, p90Hours: 48 }, reason: null } : unmeasured);
+    expect(changeResultOf(stop, [stop], rows, stepOf, TODAY)).toMatchObject({ measuredEngine: "alpha", step: "beta" });
+  });
+  it("no Engine with a step the window holds: inconclusive, named, never a date months away", () => {
+    const rows = span(1, 28, (n) => [row("alpha", "main", "v1", n, 100, { beta: 10 })]);
+    expect(changeResultOf(stop, [stop], rows, () => ({ step: null, reason: "step_slower_than_window" }), TODAY)).toMatchObject({ measuredEngine: null, verdict: "inconclusive", verdictReason: "no_step_readable_within_window", measuredOn: null });
   });
 });
 
@@ -233,7 +253,7 @@ describe("campaignChangesOf: the served list", () => {
     const list = campaignChangesOf({
       rows,
       campaignEvents,
-      downstream: twoDays,
+      transitions: [{ fromKey: "alpha", toKey: "beta", pairs: 50, medianHours: 20, p90Hours: 48 }],
       today: TODAY,
       scriptLabel: (d) => (d === "alpha/old" ? "Plain Writer" : null),
       strategyLabel: (id) => (id === "st1" ? "Short emails" : null),
@@ -255,7 +275,7 @@ describe("owners' bodies", () => {
       { scriptSlug: "alpha/main/v2", day: "2026-01-01", producedOutcomes: ["alpha"], reachedOutcomes: [], runs: 30 },
       { scriptSlug: "alpha/main/v2", day: "2026-01-01", producedOutcomes: ["alpha"], reachedOutcomes: ["beta", "gamma"], runs: 3 },
     ] };
-    expect(parseVersionReach(body).rows).toEqual([{ engine: "alpha", dynasty: "main", version: "v2", day: "2026-01-01", decisions: 40, reached: { beta: 10, gamma: 3 } }]);
+    expect(parseVersionReach(body).rows).toEqual([{ engine: "alpha", dynasty: "main", version: "v2", day: "2026-01-01", decisions: 40, reached: { beta: 10, gamma: 3 }, produced: { alpha: 40 } }]);
     expect(() => parseVersionReach({ builtAt: "x", groups: [{ scriptSlug: "alpha/main", day: "2026-01-01", producedOutcomes: [], reachedOutcomes: [], runs: 1 }] })).toThrow(/version/);
     expect(() => parseVersionReach({ groups: [] })).toThrow(/builtAt/);
   });
