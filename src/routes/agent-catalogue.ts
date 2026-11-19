@@ -1623,7 +1623,9 @@ router.post("/internal/catalogue/steps", apiKeyOnly, async (req, res) => {
 
 /**
  * States ANY step's lifecycle rung (the outcome rung catalogue `outcome_lifecycle_rungs`, coded steps included:
- * OUTCOME-RUNG-AND-TARGET-1106) and/or a DECLARED step's subject kind (a coded step's is code, `lib/outcome-subject.ts`).
+ * OUTCOME-RUNG-AND-TARGET-1106) and/or a DECLARED step's subject kind (a coded step's is code, `lib/outcome-subject.ts`)
+ * and/or a DECLARED step's `label`, the name every surface shows a client (CAMPAIGN-CHANGE-LOG-FIX-1119: "LLM completion"
+ * was internal wording on the campaign page). The key never moves.
  */
 router.patch("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
@@ -1632,17 +1634,21 @@ router.patch("/internal/catalogue/steps/:id", apiKeyOnly, async (req, res) => {
     const updatedBy = actorOf(body);
     const hasRung = body.lifecycleRung !== undefined && body.lifecycleRung !== null;
     const hasKind = body.subjectKind !== undefined && body.subjectKind !== null;
-    if (!hasRung && !hasKind) throw bad("lifecycleRung_required", "lifecycleRung or subjectKind is required");
+    const hasLabel = body.label !== undefined && body.label !== null;
+    if (hasLabel && (typeof body.label !== "string" || body.label.trim() === "" || body.label.length > 80)) throw bad("label_invalid", "label must be a non-empty string of at most 80 characters");
+    const label = hasLabel ? (body.label as string).trim() : null;
+    if (!hasRung && !hasKind && !hasLabel) throw bad("lifecycleRung_required", "lifecycleRung, subjectKind or label is required");
     const rung = hasRung ? lifecycleRungOf(body.lifecycleRung) : null;
     const kind = hasKind ? subjectKindOf(body.subjectKind) : null;
-    const set = { ...(rung ? { lifecycleRung: rung } : {}), ...(kind ? { subjectKind: kind } : {}) };
+    const set = { ...(rung ? { lifecycleRung: rung } : {}), ...(kind ? { subjectKind: kind } : {}), ...(label ? { label } : {}) };
     const key = req.params.id;
     const { steps: declared } = await registerStepDeclarations();
     const isDeclared = declared.some((d) => d.key === key);
     const isCoded = !isDeclared && (Object.hasOwn(CHANNEL_STEPS, key) || NEW_LEAD_STATE_STEPS.some((l) => l.key === key));
     if (!isDeclared && !isCoded) throw new DeclarationError(404, "step_not_found", `no step ${key}`);
     if (kind && isCoded) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its subject kind is set in code`);
-    if (kind) await updateDeclaredStep(key, { subjectKind: kind });
+    if (label && isCoded) throw new DeclarationError(409, "step_coded", `${key} is a coded step: its label is set in code`);
+    if (kind || label) await updateDeclaredStep(key, { ...(kind ? { subjectKind: kind } : {}), ...(label ? { label } : {}) });
     if (rung) await setOutcomeRung(key, rung, updatedBy);
     await registerStepDeclarations();
     invalidateChannelCatalogue();

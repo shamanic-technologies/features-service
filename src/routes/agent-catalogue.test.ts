@@ -938,6 +938,13 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
     expect((await request(app).patch("/internal/catalogue/steps/paid_client").set(KEY).send({ subjectKind: "object", createdBy: "staff" })).status).toBe(409);
     expect((await request(app).patch("/internal/catalogue/steps/nope").set(KEY).send({ lifecycleRung: "engaged", createdBy: "staff" })).status).toBe(404);
     expect((await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ createdBy: "staff" })).body.reason).toBe("lifecycleRung_required");
+
+    // CAMPAIGN-CHANGE-LOG-FIX-1119: a declared step's client-readable name is catalogue data; a coded one's is code.
+    const renamed = await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ label: "Ping out", createdBy: "staff" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body).toMatchObject({ id: "ping_sent", name: "Ping out" });
+    expect((await request(app).patch("/internal/catalogue/steps/booking_call").set(KEY).send({ label: "Call", createdBy: "staff" })).status).toBe(409);
+    expect((await request(app).patch("/internal/catalogue/steps/ping_sent").set(KEY).send({ label: " ", createdBy: "staff" })).body.reason).toBe("label_invalid");
   });
 
   it("CLIENT-SATISFIED-1027: a step after Paid client states no toward step, has no value, and a pipe can land on it", async () => {
