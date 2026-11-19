@@ -411,8 +411,8 @@ export async function insertStep(input: Omit<DeclaredStep, "createdAt">): Promis
   return { ...row, createdAt: row.createdAt.toISOString() };
 }
 
-/** Sets a DECLARED step's lifecycle rung and/or subject kind; null when no declared step has the key. */
-export async function updateDeclaredStep(key: string, set: { lifecycleRung?: string; subjectKind?: string }): Promise<DeclaredStep | null> {
+/** Sets a DECLARED step's lifecycle rung, subject kind and/or label (the name a client reads); null when no declared step has the key. */
+export async function updateDeclaredStep(key: string, set: { lifecycleRung?: string; subjectKind?: string; label?: string }): Promise<DeclaredStep | null> {
   const [row] = await db.update(declaredSteps).set(set).where(eq(declaredSteps.key, key)).returning();
   return row ? { ...row, createdAt: row.createdAt.toISOString() } : null;
 }
