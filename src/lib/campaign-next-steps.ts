@@ -224,6 +224,11 @@ export interface HeldEngine {
   heldSince: string;
   /** The latest refusal (ISO). */
   lastAnsweredAt: string;
+  /**
+   * The holder called this hold a normal business state (MON-HELD-FALSE-1113): the client's own credit, budget or limit,
+   * never a fault of ours. DOC-DINNERS-SENDS-1119: a page must not tell the client "our team is on it" for it.
+   */
+  expected: boolean;
 }
 
 /** What waits to go out and when, every channel together: the one figure our assistant states as "queued". */

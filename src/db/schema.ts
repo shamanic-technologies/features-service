@@ -1100,7 +1100,8 @@ export type CampaignEngineStrategyRow = typeof campaignEngineStrategies.$inferSe
 /**
  * NEXT-STEPS-TRUE-REASON-1111: the latest answer the Engine runner got per (pipe campaign, Engine) from
  * `/internal/script-strategy`, so the campaign's next-steps read can name the Engine that cannot run (any process, any
- * restart). `held_reason` null = it could run; `first_held_at` = start of the current refusal streak.
+ * restart). `held_reason` null = it could run; `first_held_at` = start of the current refusal streak (a pass stated by the
+ * same run seconds before a refusal does not end it, DOC-DINNERS-SENDS-1119).
  */
 export const campaignEngineAnswers = pgTable(
   "campaign_engine_answers",
@@ -1110,6 +1111,11 @@ export const campaignEngineAnswers = pgTable(
     heldReason: text("held_reason"),
     firstHeldAt: timestamp("first_held_at", { withTimezone: true }),
     answeredAt: timestamp("answered_at", { withTimezone: true }).notNull(),
+    // DOC-DINNERS-SENDS-1119 (migration 0079): the reason of the current or last refusal streak, since when the Engine
+    // has been answered a pass with no refusal (null while held), and whether the holder called the hold expected.
+    streakReason: text("streak_reason"),
+    passingSince: timestamp("passing_since", { withTimezone: true }),
+    expected: boolean("expected").notNull().default(false),
   },
   (table) => [primaryKey({ name: "campaign_engine_answers_pk", columns: [table.campaignId, table.outcome] })],
 );

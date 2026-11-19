@@ -23607,11 +23607,15 @@
                   },
                   "heldSince": {
                     "type": "string",
-                    "description": "Since when (ISO) it has been refused with no good answer in between."
+                    "description": "Since when (ISO) it has been refused with no good answer in between (a pass the same run got seconds before its refusal does not count)."
                   },
                   "lastAnsweredAt": {
                     "type": "string",
                     "description": "The latest refusal (ISO)."
+                  },
+                  "expected": {
+                    "type": "boolean",
+                    "description": "true = the service holding it calls it a normal business state (the client is out of credit, a budget or limit the client set is spent): the client's to act on, never a fault of ours."
                   }
                 },
                 "required": [
@@ -23619,7 +23623,8 @@
                   "pipeCampaignId",
                   "reason",
                   "heldSince",
-                  "lastAnsweredAt"
+                  "lastAnsweredAt",
+                  "expected"
                 ],
                 "description": "THE reason nothing (more) goes out, when there is one: the Engine of this campaign that cannot run, held longest (the Engine runner's latest answer in the last hour was a refusal). State it before any other explanation (never guess a budget, cap or timing). Null when every Engine asked in the last hour could run."
               },
@@ -23659,11 +23664,15 @@
                 },
                 "heldSince": {
                   "type": "string",
-                  "description": "Since when (ISO) it has been refused with no good answer in between."
+                  "description": "Since when (ISO) it has been refused with no good answer in between (a pass the same run got seconds before its refusal does not count)."
                 },
                 "lastAnsweredAt": {
                   "type": "string",
                   "description": "The latest refusal (ISO)."
+                },
+                "expected": {
+                  "type": "boolean",
+                  "description": "true = the service holding it calls it a normal business state (the client is out of credit, a budget or limit the client set is spent): the client's to act on, never a fault of ours."
                 }
               },
               "required": [
@@ -23671,7 +23680,8 @@
                 "pipeCampaignId",
                 "reason",
                 "heldSince",
-                "lastAnsweredAt"
+                "lastAnsweredAt",
+                "expected"
               ]
             },
             "description": "Every Engine of this campaign that cannot run now (any Engine, any reason, as answered to the Engine runner within the last hour). Empty = none held. Null with heldEnginesUnavailableReason."
