@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { campaignForecastOf, chooseDelay, chooseEntryCost, chooseYield, delayQuantileOf, forecastOf, lagSharesOf, mixDelayCurves, rngOf, scaledCapacity, DEFAULT_DELAY_MEDIAN_DAYS, PLAN_LINE_SPREAD_CASES, type CampaignForecastInput, type ForecastInput } from "./outcome-forecast.js";
 import { gammaQuantile, rateEstimateOf, type DelayDistribution, type TransitionStat } from "./outcome-silver.js";
 import type { SpendCapacityInput } from "./spend-capacity.js";
+
+// The forecast is a Monte Carlo simulation: CPU-bound, 1-3 s per test alone. In the full suite the parallel workers
+// share the CPU and it passed vitest's default 5 s (8 red on a clean main, 2026-11-19). Nothing shared between tests.
+vi.setConfig({ testTimeout: 30_000 });
 
 const prior = { shape: 0.5, rate: 500 };
 const delayOf = (n: number, hours = 48): DelayDistribution => ({ n, meanHours: hours, medianHours: hours, p10Hours: hours / 2, p25Hours: hours / 2, p75Hours: hours * 2, p90Hours: hours * 2, cdf: [{ hours: hours * 2, share: 1 }] });
