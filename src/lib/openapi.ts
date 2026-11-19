@@ -3513,8 +3513,9 @@ const heldEngineSchema = z.object({
   outcome: z.string().describe("The Engine: the outcome its runs make (message_written, email_sent...)."),
   pipeCampaignId: z.string().describe("The pipe (unit campaign) of this campaign the Engine runner asked for."),
   reason: z.string().describe("The refusal it got, as served (campaign_states_no_brief, no_runnable_script_kept, script_strategy_unreadable, campaign_states_no_campaign...)."),
-  heldSince: z.string().describe("Since when (ISO) it has been refused with no good answer in between."),
+  heldSince: z.string().describe("Since when (ISO) it has been refused with no good answer in between (a pass the same run got seconds before its refusal does not count)."),
   lastAnsweredAt: z.string().describe("The latest refusal (ISO)."),
+  expected: z.boolean().describe("true = the service holding it calls it a normal business state (the client is out of credit, a budget or limit the client set is spent): the client's to act on, never a fault of ours."),
 });
 
 const campaignNextStepsResponseRef = registry.register(
