@@ -6153,6 +6153,15 @@ const costPerOutcomeLifetimeResponseSchema = z.object({
   brandCount: z.number().int().describe("Number of client brands with usable economics that backed the fleet-mean projection."),
 });
 
+const showcaseMeetingCostReasonSchema = z
+  .enum(["no_unit_of_ours_yet", "no_unit_yet", "unit_cost_not_in_ledger", "outcome_not_declared_in_ledger", "no_producer_declares_outcome", "vendor_cost_unknown", "ledger_unreadable"])
+  .nullable()
+  .describe("SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: why `costPerReachUsd` is null. `no_unit_of_ours_yet` = every meeting was made by ANOTHER factory (the client's own team / CRM, or no proof of ours), so none of our cost; the others: nothing reached, a Unit with no ledger unit cost, an outcome nobody declares, the brand's vendor cost unknown, the brand's ledger unreadable on this read. Null when priced.");
+const showcaseMeetingCostFields = {
+  ourPeopleReached: z.number().int().nullable().describe("SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings OUR factory booked (the ledger's Units). The cost divides these only.").optional(),
+  otherFactoryPeopleReached: z.number().int().nullable().describe("SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings another factory made (the client's team / CRM, or no proof of ours). None of our cost.").optional(),
+  costPerReachUnavailableReason: showcaseMeetingCostReasonSchema.optional(),
+};
 const showcaseVendorCostSchema = z
   .object({
     unpricedSharePct: z.number().describe("Share of the brand's billed spend (comped rows included) whose real vendor cost is not known, in %."),
@@ -6173,7 +6182,8 @@ const showcaseBrandFunnelsSchema = z.object({
         key: z.string().describe("Stable machine key of the rung — the canonical LEG key, or 'contacted' for the outreach base. Key off this, not off the buyer-facing label."),
         label: z.string().describe("The funnel's OWN name for this step, in the words the customer's screen uses."),
         peopleReached: z.number().int().nullable().describe("DISTINCT people who reached this step. 0 is MEASURED ('nobody got here'); null is 'we have no figure' (the producer behind this rung was unreadable on this read) — NEVER a 0 standing in for an unknown."),
-        costPerReachUsd: z.number().nullable().describe("WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."),
+        costPerReachUsd: z.number().nullable().describe("WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. EXCEPT the Meeting booked rung (SHOWCASE-COST-PER-MEETING-1119): the brand ledger's every-path cost of ONE meeting OUR factory booked (vendor basis), never the spend over every meeting; null with `costPerReachUnavailableReason`. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."),
+        ...showcaseMeetingCostFields,
       })).describe("The rungs in the funnel's OWN order, first to last, with the outreach base first. Never pruned: a step nobody reached is still a step, and a consumer hides empty cells itself."),
     })).describe("One chain per funnel the brand's OWN campaigns state they sell, in catalogue order. Two funnels share legs, so their figures overlap and must NEVER be summed."),
     measured: z.boolean().describe("True iff at least one chain was walked. False always names its reason."),
@@ -7335,7 +7345,8 @@ const showcaseOutcomeBrandSchema = z.object({
       label: z.string(),
       legKeys: z.array(z.string()).describe("The legs landing on this step on the paths the brand sells (empty for the base). Replaces a rung's `key`."),
       peopleReached: z.number().int().nullable().describe("DISTINCT people who reached the step. 0 measured; null = no figure."),
-      costPerReachUsd: z.number().nullable().describe("Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."),
+      costPerReachUsd: z.number().nullable().describe("Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`). Meeting booked (SHOWCASE-COST-PER-MEETING-1119): the brand ledger's every-path cost of ONE meeting OUR factory booked, vendor basis; another factory's meetings carry none of our cost; null with `costPerReachUnavailableReason`."),
+      ...showcaseMeetingCostFields,
     }),
   ),
   measured: z.boolean(),

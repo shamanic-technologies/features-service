@@ -41,7 +41,9 @@ import {
   type ShowcaseVendorCost,
   type ShowcaseFunnelsPayload,
   type ShowcaseGroup,
+  type ShowcaseCostUnavailableReason,
 } from "./showcase-funnels.js";
+import type { ShowcaseMeetingCost } from "./showcase-clients.js";
 
 const stepWire = (key: ChannelStepKey): ChannelStepDefWire => ({ ...CHANNEL_STEPS[key] });
 const stepOrder = (key: ChannelStepKey): number => CHANNEL_STEP_KEYS.indexOf(key);
@@ -334,6 +336,10 @@ export interface ShowcaseOutcome {
   peopleReached: number | null;
   /** Committed NET spend ÷ people reached, in dollars. OBSERVED; `null` when there is no denominator. */
   costPerReachUsd: number | null;
+  /** Meeting booked only (SHOWCASE-COST-PER-MEETING-1119): our Units, another factory's, and why no cost (`ShowcaseFunnelStep`). */
+  ourPeopleReached?: number | null;
+  otherFactoryPeopleReached?: number | null;
+  costPerReachUnavailableReason?: ShowcaseCostUnavailableReason | null;
 }
 
 export type ShowcaseOutcomeUnmeasuredReason =
@@ -381,6 +387,8 @@ export interface ShowcaseHeroCounts {
   positiveReplies: number | null;
   meetingsBooked: number | null;
   committedSpentCents: number | null;
+  /** SHOWCASE-COST-PER-MEETING-1119: the ledger's cost of OUR meetings (`showcaseMeetingCostOf`); absent = not read. */
+  meetingCost?: ShowcaseMeetingCost | null;
 }
 
 /** The two steps every showcase brand states, whether or not its chain walks them. */
@@ -414,6 +422,9 @@ export function showcaseOutcomesOf(entry: ShowcaseBrandFunnels, heroCounts: Show
         legKeys: [s.key],
         peopleReached: s.peopleReached,
         costPerReachUsd: s.costPerReachUsd,
+        ...(s.costPerReachUnavailableReason !== undefined
+          ? { ourPeopleReached: s.ourPeopleReached ?? null, otherFactoryPeopleReached: s.otherFactoryPeopleReached ?? null, costPerReachUnavailableReason: s.costPerReachUnavailableReason }
+          : {}),
       });
     }
   }
@@ -426,12 +437,18 @@ export function showcaseOutcomesOf(entry: ShowcaseBrandFunnels, heroCounts: Show
       const people = count(heroCounts);
       if (people === null) continue;
       const spent = heroCounts.committedSpentCents;
+      // A meeting is priced off the ledger (our meetings only, SHOWCASE-COST-PER-MEETING-1119), never spend ÷ every meeting.
+      const ledgerCost = key === "meeting_booked" ? heroCounts.meetingCost : undefined;
       byKey.set(key, {
         key,
         label: CHANNEL_STEPS[key].label,
         legKeys: [],
         peopleReached: people,
-        costPerReachUsd: spent !== null && spent > 0 && people > 0 ? spent / 100 / people : null,
+        ...(ledgerCost
+          ? ledgerCost
+          : key === "meeting_booked"
+            ? { costPerReachUsd: null, ourPeopleReached: null, otherFactoryPeopleReached: null, costPerReachUnavailableReason: "ledger_unreadable" as const }
+            : { costPerReachUsd: spent !== null && spent > 0 && people > 0 ? spent / 100 / people : null }),
       });
     }
   }
