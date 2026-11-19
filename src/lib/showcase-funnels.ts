@@ -98,7 +98,30 @@ export interface ShowcaseFunnelStep {
    * outcome having been free. It is served in dollars because the page divides nothing.
    */
   costPerReachUsd: number | null;
+  /**
+   * SHOWCASE-COST-PER-MEETING-1119, served on the Meeting booked rung only (absent elsewhere): of `peopleReached`, the
+   * Units OUR factory produced and the Units another factory made (the client's CRM / team, or no proof of ours). The
+   * rung's `costPerReachUsd` divides OUR Units only (cost-accounting doctrine: another factory's meeting carries none of
+   * our cost); null with the reason below.
+   */
+  ourPeopleReached?: number | null;
+  otherFactoryPeopleReached?: number | null;
+  costPerReachUnavailableReason?: ShowcaseCostUnavailableReason | null;
 }
+
+/**
+ * Why a ledger-priced rung states no cost: `no_unit_of_ours_yet` = every Unit was made by another factory (the client's
+ * own team / CRM, or no proof of ours), so none of our cost; the other values are the ledger's own (nothing reached, a
+ * Unit with no unit cost, an outcome nobody declares) or the brand's vendor cost being unknown.
+ */
+export type ShowcaseCostUnavailableReason =
+  | "no_unit_of_ours_yet"
+  | "no_unit_yet"
+  | "unit_cost_not_in_ledger"
+  | "outcome_not_declared_in_ledger"
+  | "no_producer_declares_outcome"
+  | "vendor_cost_unknown"
+  | "ledger_unreadable";
 
 /** One funnel of one showcase brand, walked in the funnel's own order. */
 export interface ShowcaseFunnel {

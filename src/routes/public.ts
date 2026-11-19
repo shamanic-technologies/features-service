@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { fetchBrandOutcomeLedger } from "../lib/scope-outcome-ledger-io.js";
+import type { ScopeOutcomeLedgerInput } from "../lib/scope-outcome-ledger.js";
 import { routeChannelOf, servedJsonText } from "../lib/served-leg-keys.js";
 import { fetchFleetLegCampaignsFor } from "../lib/fleet-leg-campaigns.js";
 import { fetchReplyLatencyByCampaignGroups } from "../lib/campaign-next-steps-io.js";
@@ -160,6 +162,7 @@ import {
   pickByMostMeetings,
   withMeetingFactCandidates,
   withMeetingFacts,
+  showcaseMeetingCostOf,
   pickShowcaseClients,
   SHOWCASE_GROUP_SIZE,
   walkComplete,
@@ -3187,8 +3190,29 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
 
   const walkedFull = new Map<string, WalkedShowcaseBrand>();
   const walked = new Map<string, ShowcaseBrandFunnels>();
+  // SHOWCASE-COST-PER-MEETING-1119: each walked brand's OWN ledger (vendor basis, the row its dashboard prints) prices a
+  // booked meeting on OUR meetings only. One retry; still unreadable = the meeting cost is null `ledger_unreadable`
+  // (logged), the counts and the brand's seat kept.
+  const meetingLedgers = new Map<string, Promise<ScopeOutcomeLedgerInput | null>>();
+  const meetingLedgerOf = (brandId: string): Promise<ScopeOutcomeLedgerInput | null> =>
+    meetingLedgers.get(brandId) ??
+    meetingLedgers
+      .set(
+        brandId,
+        fetchBrandOutcomeLedger(brandId, "vendor")
+          .catch((first: Error) => {
+            console.warn(`[features-service] showcase: ledger of brand ${brandId} failed, retrying once: ${first.message}`);
+            return fetchBrandOutcomeLedger(brandId, "vendor");
+          })
+          .catch((err: Error) => {
+            console.error(`[features-service] showcase: ledger of brand ${brandId} unreadable, its meeting cost is null: ${err.message}`);
+            return null;
+          }),
+      )
+      .get(brandId)!;
   const walkAll = async (ids: string[]): Promise<void> => {
     const todo = ids.filter((id) => !walked.has(id));
+    for (const id of todo) void meetingLedgerOf(id);
     const entries = await mapWithConcurrency(
       todo,
       SHOWCASE_BRAND_CONCURRENCY,
@@ -3218,7 +3242,9 @@ async function computeShowcasePayloads(): Promise<ShowcasePayloads> {
       },
     );
     for (const raw of entries) {
-      const e = withMeetingFacts(raw, meetingFacts.get(raw.entry.brand.id) ?? 0);
+      const moneyWithheld = (raw.entry.vendorCost?.moneyUnavailableReason ?? null) !== null;
+      const meetingCost = showcaseMeetingCostOf(await meetingLedgerOf(raw.entry.brand.id), moneyWithheld);
+      const e = withMeetingFacts(raw, meetingFacts.get(raw.entry.brand.id) ?? 0, meetingCost);
       walked.set(e.entry.brand.id, e.entry);
       walkedFull.set(e.entry.brand.id, e);
     }

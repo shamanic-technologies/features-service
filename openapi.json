@@ -56568,7 +56568,32 @@
                                       "costPerReachUsd": {
                                         "type": "number",
                                         "nullable": true,
-                                        "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                        "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. EXCEPT the Meeting booked rung (SHOWCASE-COST-PER-MEETING-1119): the brand ledger's every-path cost of ONE meeting OUR factory booked (vendor basis), never the spend over every meeting; null with `costPerReachUnavailableReason`. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                      },
+                                      "ourPeopleReached": {
+                                        "type": "integer",
+                                        "nullable": true,
+                                        "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings OUR factory booked (the ledger's Units). The cost divides these only."
+                                      },
+                                      "otherFactoryPeopleReached": {
+                                        "type": "integer",
+                                        "nullable": true,
+                                        "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings another factory made (the client's team / CRM, or no proof of ours). None of our cost."
+                                      },
+                                      "costPerReachUnavailableReason": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "enum": [
+                                          "no_unit_of_ours_yet",
+                                          "no_unit_yet",
+                                          "unit_cost_not_in_ledger",
+                                          "outcome_not_declared_in_ledger",
+                                          "no_producer_declares_outcome",
+                                          "vendor_cost_unknown",
+                                          "ledger_unreadable",
+                                          null
+                                        ],
+                                        "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: why `costPerReachUsd` is null. `no_unit_of_ours_yet` = every meeting was made by ANOTHER factory (the client's own team / CRM, or no proof of ours), so none of our cost; the others: nothing reached, a Unit with no ledger unit cost, an outcome nobody declares, the brand's vendor cost unknown, the brand's ledger unreadable on this read. Null when priced."
                                       }
                                     },
                                     "required": [
@@ -56704,7 +56729,32 @@
                                               "costPerReachUsd": {
                                                 "type": "number",
                                                 "nullable": true,
-                                                "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                                "description": "WHAT REACHING THIS RUNG REALLY COST — the funnel's COMMITTED spend at REAL VENDOR COST (before any markup, whole history) over the people who reached it, in DOLLARS. OBSERVED accounting, never floored to a benchmark. Rides EVERY rung including the outreach base, on the identical formula, so a consumer renders 'cost per meeting booked' for one client and 'cost per website visit' for another with no branch. EXCEPT the Meeting booked rung (SHOWCASE-COST-PER-MEETING-1119): the brand ledger's every-path cost of ONE meeting OUR factory booked (vendor basis), never the spend over every meeting; null with `costPerReachUnavailableReason`. null is 'we have no figure' (nobody reached it, nothing spent, or the count is unmeasured) — NEVER 0, which would read as the outcome having been free. Dollars because the page divides nothing."
+                                              },
+                                              "ourPeopleReached": {
+                                                "type": "integer",
+                                                "nullable": true,
+                                                "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings OUR factory booked (the ledger's Units). The cost divides these only."
+                                              },
+                                              "otherFactoryPeopleReached": {
+                                                "type": "integer",
+                                                "nullable": true,
+                                                "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings another factory made (the client's team / CRM, or no proof of ours). None of our cost."
+                                              },
+                                              "costPerReachUnavailableReason": {
+                                                "type": "string",
+                                                "nullable": true,
+                                                "enum": [
+                                                  "no_unit_of_ours_yet",
+                                                  "no_unit_yet",
+                                                  "unit_cost_not_in_ledger",
+                                                  "outcome_not_declared_in_ledger",
+                                                  "no_producer_declares_outcome",
+                                                  "vendor_cost_unknown",
+                                                  "ledger_unreadable",
+                                                  null
+                                                ],
+                                                "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: why `costPerReachUsd` is null. `no_unit_of_ours_yet` = every meeting was made by ANOTHER factory (the client's own team / CRM, or no proof of ours), so none of our cost; the others: nothing reached, a Unit with no ledger unit cost, an outcome nobody declares, the brand's vendor cost unknown, the brand's ledger unreadable on this read. Null when priced."
                                               }
                                             },
                                             "required": [
@@ -57854,7 +57904,32 @@
                                 "costPerReachUsd": {
                                   "type": "number",
                                   "nullable": true,
-                                  "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."
+                                  "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`). Meeting booked (SHOWCASE-COST-PER-MEETING-1119): the brand ledger's every-path cost of ONE meeting OUR factory booked, vendor basis; another factory's meetings carry none of our cost; null with `costPerReachUnavailableReason`."
+                                },
+                                "ourPeopleReached": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings OUR factory booked (the ledger's Units). The cost divides these only."
+                                },
+                                "otherFactoryPeopleReached": {
+                                  "type": "integer",
+                                  "nullable": true,
+                                  "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings another factory made (the client's team / CRM, or no proof of ours). None of our cost."
+                                },
+                                "costPerReachUnavailableReason": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "enum": [
+                                    "no_unit_of_ours_yet",
+                                    "no_unit_yet",
+                                    "unit_cost_not_in_ledger",
+                                    "outcome_not_declared_in_ledger",
+                                    "no_producer_declares_outcome",
+                                    "vendor_cost_unknown",
+                                    "ledger_unreadable",
+                                    null
+                                  ],
+                                  "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: why `costPerReachUsd` is null. `no_unit_of_ours_yet` = every meeting was made by ANOTHER factory (the client's own team / CRM, or no proof of ours), so none of our cost; the others: nothing reached, a Unit with no ledger unit cost, an outcome nobody declares, the brand's vendor cost unknown, the brand's ledger unreadable on this read. Null when priced."
                                 }
                               },
                               "required": [
@@ -57971,7 +58046,32 @@
                                         "costPerReachUsd": {
                                           "type": "number",
                                           "nullable": true,
-                                          "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`)."
+                                          "description": "Committed spend at REAL VENDOR COST (before any markup, whole history) / people reached, in dollars. OBSERVED. Null when no denominator or when the brand's vendor cost is not known well enough (`vendorCost`). Meeting booked (SHOWCASE-COST-PER-MEETING-1119): the brand ledger's every-path cost of ONE meeting OUR factory booked, vendor basis; another factory's meetings carry none of our cost; null with `costPerReachUnavailableReason`."
+                                        },
+                                        "ourPeopleReached": {
+                                          "type": "integer",
+                                          "nullable": true,
+                                          "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings OUR factory booked (the ledger's Units). The cost divides these only."
+                                        },
+                                        "otherFactoryPeopleReached": {
+                                          "type": "integer",
+                                          "nullable": true,
+                                          "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: of `peopleReached`, the meetings another factory made (the client's team / CRM, or no proof of ours). None of our cost."
+                                        },
+                                        "costPerReachUnavailableReason": {
+                                          "type": "string",
+                                          "nullable": true,
+                                          "enum": [
+                                            "no_unit_of_ours_yet",
+                                            "no_unit_yet",
+                                            "unit_cost_not_in_ledger",
+                                            "outcome_not_declared_in_ledger",
+                                            "no_producer_declares_outcome",
+                                            "vendor_cost_unknown",
+                                            "ledger_unreadable",
+                                            null
+                                          ],
+                                          "description": "SHOWCASE-COST-PER-MEETING-1119, Meeting booked only: why `costPerReachUsd` is null. `no_unit_of_ours_yet` = every meeting was made by ANOTHER factory (the client's own team / CRM, or no proof of ours), so none of our cost; the others: nothing reached, a Unit with no ledger unit cost, an outcome nobody declares, the brand's vendor cost unknown, the brand's ledger unreadable on this read. Null when priced."
                                         }
                                       },
                                       "required": [
@@ -61950,7 +62050,7 @@
       },
       "patch": {
         "summary": "State a declared step's lifecycle rung and/or subject kind (internal, api-key)",
-        "description": "Sets where ANY step (coded or declared) stands on the lifecycle ladder, a row of the outcome rung catalogue `outcome_lifecycle_rungs` (OUTCOME-RUNG-AND-TARGET-1106), and/or what one occurrence of a DECLARED step is about, live, no deploy; an absent field is unchanged. A coded step's subject kind is code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
+        "description": "Sets where ANY step (coded or declared) stands on the lifecycle ladder, a row of the outcome rung catalogue `outcome_lifecycle_rungs` (OUTCOME-RUNG-AND-TARGET-1106), and/or what one occurrence of a DECLARED step is about, and/or a DECLARED step's `label` (the name every surface shows a client; the key never moves), live, no deploy; an absent field is unchanged. A coded step's subject kind and label are code (409 `step_coded`). 400 `lifecycleRung_required` (no field) / `label_invalid` / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
         "tags": [
           "Internal"
         ],
@@ -61991,6 +62091,12 @@
                       "person",
                       "object"
                     ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80,
+                    "description": "A DECLARED step's client-readable name."
                   },
                   "runnableOnly": {
                     "type": "boolean",
@@ -62111,7 +62217,7 @@
             }
           },
           "400": {
-            "description": "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`."
+            "description": "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`, `label_invalid`."
           },
           "401": {
             "description": "Missing or wrong service key."
@@ -82593,6 +82699,604 @@
           },
           "503": {
             "description": "outcome_distributions_not_built_yet"
+          }
+        }
+      }
+    },
+    "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/changes": {
+      "get": {
+        "summary": "What changed on a campaign, dated, each change with its measured result and a verdict",
+        "description": "CAMPAIGN-CHANGE-LOG-1119. The changes made on one sales funnel campaign, newest first. KINDS (`kindsServed`), each dated by its owner: SCRIPT changes read off runs-service's stored script decisions of every unit the campaign ever had (a model is a script of the LLM completion Engine, a way of writing a script of the writing Engine), GROUPED by one rule for every Engine: on a day the Engine ran at least `rules.minEngineDayDecisions` decisions, a dynasty SERVES it from `servingEnterShare` of the day and stops under `servingLeaveShare` (`script_started` / `script_stopped`); a serving dynasty whose leading version changes, the new one carrying `servingEnterShare` of the day, is `script_upgraded`; at least `triedMinScripts` non-serving dynasties carrying `triedShare` of the day are ONE `scripts_tried` line. CAMPAIGN changes copied from their owners: `budget_changed` (billing: the cap it is held to), `campaign_stopped` / `campaign_resumed` (campaign-service, grouped per minute; `reason` = the stop reason, `parts` = units moved of its units), `plan_changed`, `brief_changed`, `target_changed`, `follows_plan_changed` (campaign-service; the last three recorded since `settingsRecordedSince`), `strategy_changed` (the strategy kept per Engine, recorded since `settingsRecordedSince`). RESULT, one rule: STEP of an Engine = from its own key and every ledger key its decisions PRODUCED (an Engine's Units may be keyed another way in the ledger), Silver's fleet transitions out of them measured on at least `minStepPairs` linked pairs whose maturity fits `maxWindowDays`, shortest median delay (none with volume = no_downstream_step_measured; all slower than the window = step_slower_than_window). A change on an Engine is measured on that Engine; a campaign-wide change on the campaign's Engine whose step holds the most MATURED cases in its windows, among those with a step (none = no_step_readable_within_window, never a date months away); rate = decisions whose chain reached the step / decisions, on the decisions the change could affect (the changed script's own; the Engine's whole for a campaign or strategy change); maturity = the step's fleet p90 delay in whole days, a decision day counting once that old (censoring); window = `windowMaturityMultiple` x maturity, from `minWindowDays` to `maxWindowDays`, cut at the same track's previous / next change. VERDICT: each side's rate blended toward both sides pooled at `blendPseudoCases` cases (Gamma-Poisson), P(after > before) exact: `worked` from `verdictThresholds.worked`, `partial` from `.partial`, `did_not_work` up to `.didNotWork`, else `inconclusive`. Before any test, in order: `inconclusive` no_downstream_step_measured / step_slower_than_window / no_step_readable_within_window; `too_early` (no matured decision after: `measuredOn`) or `inconclusive` no_decisions_after (the after window matured empty); `inconclusive` nothing_before_to_compare; `confounded` (another track changed inside a window: `confoundedWith`); `inconclusive` thin_evidence (under `thinCases` cases in all or `thinDecisions` decisions on a side). WHO, positive evidence only: `our_ai` (the Rating picks a script; our judge keeps a strategy from the brief; the plan follower; the brief written from the offer), `a_person` (a signed-in person's edit, start or stop: you or our team, the record does not say which), `our_system` (billing could not charge; a value read off its funnel), null = not said. No spend is served: a cap is a ceiling and is never discounted. Every figure is served: the page computes none. Stored as a Gold cell, recomputed behind a read at most every 10 minutes.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "salesFunnelCampaignId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Lines per page, 1..200, default 50."
+            },
+            "required": false,
+            "description": "Lines per page, 1..200, default 50.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`nextCursor` of the previous page."
+            },
+            "required": false,
+            "description": "`nextCursor` of the previous page.",
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The changes, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "salesFunnelCampaignId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "computedAt": {
+                      "type": "string"
+                    },
+                    "decisionsBuiltAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "When runs-service last built the script decisions read; null = the campaign has no unit campaign."
+                    },
+                    "silverComputedAt": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The Silver sweep the steps and delays come from; null = none on today's rule (every change: no_downstream_step_measured)."
+                    },
+                    "settingsRecordedSince": {
+                      "type": "string",
+                      "description": "Brief, Target, follows-its-plan and strategy changes are recorded from this UTC day only: before it, none is invented."
+                    },
+                    "rules": {
+                      "type": "object",
+                      "properties": {
+                        "minEngineDayDecisions": {
+                          "type": "number"
+                        },
+                        "servingEnterShare": {
+                          "type": "number"
+                        },
+                        "servingLeaveShare": {
+                          "type": "number"
+                        },
+                        "triedShare": {
+                          "type": "number"
+                        },
+                        "triedMinScripts": {
+                          "type": "number"
+                        },
+                        "minStepPairs": {
+                          "type": "number"
+                        },
+                        "windowMaturityMultiple": {
+                          "type": "number"
+                        },
+                        "minWindowDays": {
+                          "type": "number"
+                        },
+                        "maxWindowDays": {
+                          "type": "number"
+                        },
+                        "blendPseudoCases": {
+                          "type": "number"
+                        },
+                        "thinCases": {
+                          "type": "number"
+                        },
+                        "thinDecisions": {
+                          "type": "number"
+                        },
+                        "verdictThresholds": {
+                          "type": "object",
+                          "properties": {
+                            "worked": {
+                              "type": "number"
+                            },
+                            "partial": {
+                              "type": "number"
+                            },
+                            "didNotWork": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "worked",
+                            "partial",
+                            "didNotWork"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "minEngineDayDecisions",
+                        "servingEnterShare",
+                        "servingLeaveShare",
+                        "triedShare",
+                        "triedMinScripts",
+                        "minStepPairs",
+                        "windowMaturityMultiple",
+                        "minWindowDays",
+                        "maxWindowDays",
+                        "blendPseudoCases",
+                        "thinCases",
+                        "thinDecisions",
+                        "verdictThresholds"
+                      ],
+                      "description": "The numbers the list was built on: word them from here, never restate one."
+                    },
+                    "kindsServed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The kinds of change this build reads."
+                    },
+                    "total": {
+                      "type": "number",
+                      "description": "Lines in the whole list."
+                    },
+                    "changes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "description": "When it happened (ISO); a script change: its UTC day at midnight."
+                          },
+                          "date": {
+                            "type": "string",
+                            "description": "UTC day of the change."
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "script_started",
+                              "script_stopped",
+                              "script_upgraded",
+                              "scripts_tried",
+                              "budget_changed",
+                              "campaign_stopped",
+                              "campaign_resumed",
+                              "plan_changed",
+                              "brief_changed",
+                              "target_changed",
+                              "follows_plan_changed",
+                              "strategy_changed"
+                            ]
+                          },
+                          "engine": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "outcomeKey": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "outcomeKey",
+                              "label"
+                            ],
+                            "description": "The Engine the change is on (the outcome it makes); null = the whole campaign."
+                          },
+                          "from": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "scriptDynasty": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "A script: `<outcome>/<dynasty>`, every version of it; null on a campaign change."
+                              },
+                              "version": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "A script: the version leading that day (`v12`)."
+                              },
+                              "value": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "A campaign change: the value as its owner recorded it (strategy id, Target step key, brief text, `yes`/`no`, funnel id, cap words)."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "The side in words a client reads: a script by its dynasty's name (its slug in words when unnamed), a strategy by its name, a Target by its outcome label, a cap as `$10.00 a day`."
+                              }
+                            },
+                            "required": [
+                              "scriptDynasty",
+                              "version",
+                              "value",
+                              "label"
+                            ]
+                          },
+                          "to": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "scriptDynasty": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "A script: `<outcome>/<dynasty>`, every version of it; null on a campaign change."
+                              },
+                              "version": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "A script: the version leading that day (`v12`)."
+                              },
+                              "value": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "A campaign change: the value as its owner recorded it (strategy id, Target step key, brief text, `yes`/`no`, funnel id, cap words)."
+                              },
+                              "label": {
+                                "type": "string",
+                                "description": "The side in words a client reads: a script by its dynasty's name (its slug in words when unnamed), a strategy by its name, a Target by its outcome label, a cap as `$10.00 a day`."
+                              }
+                            },
+                            "required": [
+                              "scriptDynasty",
+                              "version",
+                              "value",
+                              "label"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "description": "The change in words a client reads."
+                          },
+                          "who": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "our_ai",
+                              "a_person",
+                              "our_system",
+                              null
+                            ],
+                            "description": "Who made it, from positive evidence only; null = the record does not say."
+                          },
+                          "whoEvidence": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The evidence `who` rests on (the_rating_picks_the_script, changed_by_a_signed_in_person, started_or_stopped_by_hand, billing_could_not_charge, the_plan_follower_applied_its_plan, written_by_our_ai_from_the_offer, read_off_its_funnel, our_judge_keeps_it_from_the_brief, carried_from_the_campaign_play)."
+                          },
+                          "reason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "What the owner recorded about why: a stop reason (manual, payment_declined, no_payment_method, ...), a plan change reason."
+                          },
+                          "shareOfEngineDay": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Script changes: share of the Engine's decisions that day carried by what the line is about."
+                          },
+                          "tried": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "scripts": {
+                                "type": "number"
+                              },
+                              "decisions": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "scripts",
+                              "decisions"
+                            ],
+                            "description": "`scripts_tried`: how many dynasties, and their decisions that day."
+                          },
+                          "parts": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "moved": {
+                                    "type": "number"
+                                  },
+                                  "total": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "moved",
+                                  "total"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "added": {
+                                    "type": "number"
+                                  },
+                                  "retired": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "added",
+                                  "retired"
+                                ]
+                              },
+                              {
+                                "nullable": true
+                              }
+                            ],
+                            "description": "Pause / resume: units moved of the units it had; plan change: units added and retired."
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "measuredEngine": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "outcomeKey": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "outcomeKey",
+                                  "label"
+                                ],
+                                "description": "The Engine whose decisions were measured."
+                              },
+                              "step": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "outcomeKey": {
+                                    "type": "string"
+                                  },
+                                  "label": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "outcomeKey",
+                                  "label"
+                                ],
+                                "description": "The step measured; null = none measured downstream of the Engine."
+                              },
+                              "maturityDays": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "A decision day counts once it is this many days old (the step's fleet p90 delay)."
+                              },
+                              "windowDays": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "Days on each side of the change, before cuts at the same track's previous / next change."
+                              },
+                              "before": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "fromDay": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "First UTC day counted (matured days only); null = none."
+                                  },
+                                  "toDay": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "decisions": {
+                                    "type": "number",
+                                    "description": "Script decisions of the measured Engine counted in the window."
+                                  },
+                                  "cases": {
+                                    "type": "number",
+                                    "description": "Of them, those whose chain reached the step."
+                                  },
+                                  "rate": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "cases / decisions; null without a decision."
+                                  }
+                                },
+                                "required": [
+                                  "fromDay",
+                                  "toDay",
+                                  "decisions",
+                                  "cases",
+                                  "rate"
+                                ]
+                              },
+                              "after": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "fromDay": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "First UTC day counted (matured days only); null = none."
+                                  },
+                                  "toDay": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "decisions": {
+                                    "type": "number",
+                                    "description": "Script decisions of the measured Engine counted in the window."
+                                  },
+                                  "cases": {
+                                    "type": "number",
+                                    "description": "Of them, those whose chain reached the step."
+                                  },
+                                  "rate": {
+                                    "type": "number",
+                                    "nullable": true,
+                                    "description": "cases / decisions; null without a decision."
+                                  }
+                                },
+                                "required": [
+                                  "fromDay",
+                                  "toDay",
+                                  "decisions",
+                                  "cases",
+                                  "rate"
+                                ]
+                              },
+                              "changePct": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "(rate after - rate before) / rate before, in %; null when either is missing or the rate before is 0."
+                              },
+                              "probabilityBetter": {
+                                "type": "number",
+                                "nullable": true,
+                                "description": "P(the rate after is higher than before); null = not tested."
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "worked",
+                                  "partial",
+                                  "did_not_work",
+                                  "inconclusive",
+                                  "too_early",
+                                  "confounded"
+                                ]
+                              },
+                              "verdictReason": {
+                                "type": "string",
+                                "enum": [
+                                  "no_downstream_step_measured",
+                                  "step_slower_than_window",
+                                  "no_step_readable_within_window",
+                                  "no_decisions_after",
+                                  "nothing_before_to_compare",
+                                  "thin_evidence",
+                                  "after_window_not_matured",
+                                  "another_change_in_the_window",
+                                  "tested"
+                                ]
+                              },
+                              "measuredOn": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "`too_early`: the first UTC day a rate after the change can be read."
+                              },
+                              "confoundedWith": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "`confounded`: ids of the other changes inside its windows."
+                              }
+                            },
+                            "required": [
+                              "measuredEngine",
+                              "step",
+                              "maturityDays",
+                              "windowDays",
+                              "before",
+                              "after",
+                              "changePct",
+                              "probabilityBetter",
+                              "verdict",
+                              "verdictReason",
+                              "measuredOn",
+                              "confoundedWith"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "at",
+                          "date",
+                          "kind",
+                          "engine",
+                          "from",
+                          "to",
+                          "summary",
+                          "who",
+                          "whoEvidence",
+                          "reason",
+                          "shareOfEngineDay",
+                          "tried",
+                          "parts",
+                          "result"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "brandId",
+                    "salesFunnelCampaignId",
+                    "name",
+                    "computedAt",
+                    "decisionsBuiltAt",
+                    "silverComputedAt",
+                    "settingsRecordedSince",
+                    "rules",
+                    "kindsServed",
+                    "total",
+                    "changes",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad limit or cursor"
+          },
+          "404": {
+            "description": "Unknown brand or campaign"
+          },
+          "502": {
+            "description": "A source could not be read"
           }
         }
       }
