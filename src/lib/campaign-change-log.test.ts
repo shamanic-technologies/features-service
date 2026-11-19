@@ -154,18 +154,32 @@ describe("the measured result and the verdict", () => {
 
 describe("engineStepOf: the step a change is measured on (CAMPAIGN-CHANGE-LOG-FIX-1119)", () => {
   const t = (fromKey: string, toKey: string, pairs: number, medianHours: number, p90Hours: number) => ({ fromKey, toKey, pairs, medianHours, p90Hours });
+  // Our outputs: a completion, a message, a send. Results: reply, click.
+  const ours = new Set(["completed", "written", "delivered"]);
+  const fleet = [
+    t("completed", "written", 900, 0, 0),
+    t("completed", "delivered", 500, 7, 12),
+    t("written", "delivered", 9000, 100, 500),
+    t("written", "reply", 100, 60, 400),
+    t("delivered", "click", 800, 0, 10),
+    t("delivered", "reply", 120, 3, 170),
+  ];
   it("an Engine whose Units the ledger keys another way is measured from the key its decisions PRODUCED", () => {
     const rows = [row("sent", "main", "v1", 1, 40, {}, { delivered: 40 }), row("sent", "main", "v1", 2, 10, {}, { delivered: 9, sent: 1 })];
     const keys = ledgerKeysOf(rows);
     expect(keys.get("sent")).toEqual(["delivered", "sent"]);
-    const transitions = [t("delivered", "clicked", 800, 1, 10), t("delivered", "sent", 50, 0, 1)];
-    expect(engineStepOf("sent", keys.get("sent")!, transitions)).toEqual({ step: { step: "clicked", pairs: 800, medianHours: 1, p90Hours: 10 }, reason: null });
-    expect(engineStepOf("sent", [], transitions)).toEqual({ step: null, reason: "no_downstream_step_measured" });
+    expect(engineStepOf("sent", keys.get("sent")!, ours, fleet).step?.step).toBe("reply");
+    expect(engineStepOf("sent", [], ours, fleet)).toEqual({ step: null, reason: "no_downstream_step_measured" });
   });
-  it("the nearest step a client can read within the window: a faster median whose p90 passes 28 days is skipped", () => {
-    const transitions = [t("alpha", "pool", 70000, 0, 71 * 24), t("alpha", "click", 800, 140, 24 * 24), t("alpha", "thin", 9, 1, 2)];
-    expect(engineStepOf("alpha", [], transitions).step?.step).toBe("click");
-    expect(engineStepOf("alpha", [], transitions.slice(0, 1))).toEqual({ step: null, reason: "step_slower_than_window" });
+  it("a model is measured on the first RESULT of the writer's message it served, never on its own chain's bookkeeping", () => {
+    const pick = engineStepOf("completed", [], ours, fleet);
+    // Not `written` (0 h, same run), not `delivered` (our send), not `click` (0 h after the send: a link scanner).
+    expect(pick).toEqual({ step: { step: "reply", pairs: 120, medianHours: 10, p90Hours: 182 }, reason: null });
+  });
+  it("a result whose path passes the 28-day window is never picked", () => {
+    const slow = [t("alpha", "reply", 70000, 2, 71 * 24), t("alpha", "click", 800, 140, 24 * 24)];
+    expect(engineStepOf("alpha", [], new Set(), slow).step?.step).toBe("click");
+    expect(engineStepOf("alpha", [], new Set(), slow.slice(0, 1))).toEqual({ step: null, reason: "step_slower_than_window" });
   });
 });
 

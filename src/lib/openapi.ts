@@ -8561,15 +8561,15 @@ registry.registerPath({
   method: "patch",
   path: "/internal/catalogue/steps/{id}",
   summary: "State a declared step's lifecycle rung and/or subject kind (internal, api-key)",
-  description: "Sets where ANY step (coded or declared) stands on the lifecycle ladder, a row of the outcome rung catalogue `outcome_lifecycle_rungs` (OUTCOME-RUNG-AND-TARGET-1106), and/or what one occurrence of a DECLARED step is about, live, no deploy; an absent field is unchanged. A coded step's subject kind is code (409 `step_coded`). 400 `lifecycleRung_required` (neither field) / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
+  description: "Sets where ANY step (coded or declared) stands on the lifecycle ladder, a row of the outcome rung catalogue `outcome_lifecycle_rungs` (OUTCOME-RUNG-AND-TARGET-1106), and/or what one occurrence of a DECLARED step is about, and/or a DECLARED step's `label` (the name every surface shows a client; the key never moves), live, no deploy; an absent field is unchanged. A coded step's subject kind and label are code (409 `step_coded`). 400 `lifecycleRung_required` (no field) / `label_invalid` / `lifecycle_rung_invalid` / `subject_kind_invalid`; 404 `step_not_found`; a customer write is refused.",
   tags: ["Internal"],
   request: {
     params: z.object({ id: z.string().describe("The declared step key.") }),
-    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).optional(), subjectKind: z.enum(["person", "object"]).optional(), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
+    body: { content: { "application/json": { schema: z.object({ lifecycleRung: z.enum([...catalogueLifecycleRungs, "none"]).optional(), subjectKind: z.enum(["person", "object"]).optional(), label: z.string().min(1).max(80).optional().describe("A DECLARED step's client-readable name."), runnableOnly: customerNeverCreates("a step"), createdBy: catalogueActor.createdBy }) } } },
   },
   responses: {
     200: { description: "The step's rung, as now served.", content: { "application/json": { schema: z.object({ object: z.literal("step"), id: z.string(), name: z.string(), declared: z.literal(true), ...catalogueLifecycleFields }) } } },
-    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`." },
+    400: { description: "`lifecycleRung_required`, `lifecycle_rung_invalid`, `subject_kind_invalid`, `label_invalid`." },
     401: { description: "Missing or wrong service key." },
     404: { description: "`step_not_found`." },
     409: { description: "`step_coded`." },

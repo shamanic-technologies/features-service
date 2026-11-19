@@ -20,11 +20,13 @@
  *    follows-its-plan (campaign-service; brief and Target recorded since 2026-11-19), and the strategy kept per Engine
  *    (ours, recorded since 2026-11-19).
  *
- * THE MEASURED RESULT, one rule. The STEP of an Engine: from its own key and every ledger key its decisions PRODUCED
- * (an Engine's Units may be keyed another way in the ledger: read off the decisions, never a table), Silver's fleet
- * transitions out of them measured on at least `MIN_STEP_PAIRS` (10) linked pairs whose maturity fits `MAX_WINDOW_DAYS`
- * (a client reads it within weeks), the shortest median delay. A change on an Engine is measured on that Engine; a
- * campaign-wide change on the campaign's Engine whose step holds the most MATURED cases in its windows (none = said).
+ * THE MEASURED RESULT, one rule. The STEP of an Engine = the first RESULT its decisions lead to: an outcome no decision
+ * of ours produced (a positive reply, a click, a meeting), reached through our own outputs only (a model's completion,
+ * the writer's message, the send are bookkeeping of the same chain: a change does not plausibly move them), never within
+ * `MECHANICAL_MEDIAN_HOURS` of its source (a link scanner), and readable within `MAX_WINDOW_DAYS` (`engineStepOf`).
+ * A model is asked by a writer: its decisions' chain runs through that writer's message, so the model is measured on
+ * the writer runs that used it. A change on an Engine is measured on that Engine; a campaign-wide change on the
+ * campaign's Engine whose step holds the most MATURED cases in its windows (none = said).
  * Rate = decisions whose chain reached the step ÷ decisions, on the decisions the change could affect: the changed
  * script's own for a script change (the new dynasty or version after, what it replaced before; the others after a
  * dynasty stopped), the Engine's whole for a campaign or strategy change. WINDOWS are sized by the step's delay:
@@ -58,7 +60,7 @@ export const THIN_CASES = 10;
 export const THIN_DECISIONS = 30;
 export const VERDICT_THRESHOLDS = { worked: 0.9, partial: 0.7, didNotWork: 0.3 } as const;
 /** Bump when a rule here changes what a stored list means: it is in the cell's key. */
-export const CHANGE_LOG_RULE = "2026-11-19.3";
+export const CHANGE_LOG_RULE = "2026-11-19.4";
 
 /** The decisions one script version ran for the campaign on one UTC day, and how many reached each outcome. */
 export interface ScriptDayRow {
@@ -516,20 +518,47 @@ export function ledgerKeysOf(rows: readonly ScriptDayRow[]): Map<string, string[
 
 export type StepPick = { step: DownstreamStep; reason: null } | { step: null; reason: "no_downstream_step_measured" | "step_slower_than_window" };
 
+/** A step reached within this median delay of its source is a mechanical consequence (the run's own bookkeeping, a link scanner), never a result. */
+export const MECHANICAL_MEDIAN_HOURS = 1;
+
 /**
- * PURE. The step an Engine's decisions are measured on: the nearest downstream step with volume a client can read
- * within the window. From-keys = the Engine's own key and every ledger key its decisions produced; candidates = Silver's
- * fleet transitions out of them measured on at least `MIN_STEP_PAIRS` pairs, to a key that is not one of them; of those
- * whose maturity (p90 delay in days) fits `MAX_WINDOW_DAYS`, the shortest median delay (then the most pairs, the key).
+ * PURE. The step an Engine's decisions are measured on: the first RESULT its decisions lead to, i.e. an outcome NO
+ * decision of ours produced (a prospect's act), never one of our own outputs (a writer's message, the send, the model's
+ * completion: bookkeeping of the same chain, which a change does not plausibly move). From the Engine's own key and the
+ * ledger keys its decisions produced, the path walks Silver's fleet transitions (at least `MIN_STEP_PAIRS` pairs)
+ * through our own outputs only; a result is a candidate when its last hop is not mechanical (median at least
+ * `MECHANICAL_MEDIAN_HOURS`) and the path's maturity (summed p90 delays) fits `MAX_WINDOW_DAYS`. The nearest by summed
+ * median wins (then the last hop's pairs, then the key). `ours` = every key a decision of the campaign produced.
  */
-export function engineStepOf(engine: string, ledgerKeys: readonly string[], transitions: readonly FleetTransition[]): StepPick {
-  const from = new Set([engine, ...ledgerKeys]);
-  const candidates = transitions.filter((t) => from.has(t.fromKey) && !from.has(t.toKey) && t.pairs >= MIN_STEP_PAIRS);
-  if (candidates.length === 0) return { step: null, reason: "no_downstream_step_measured" };
-  const readable = candidates.filter((t) => maturityDaysOf(t) <= MAX_WINDOW_DAYS);
+export function engineStepOf(engine: string, ledgerKeys: readonly string[], ours: ReadonlySet<string>, transitions: readonly FleetTransition[]): StepPick {
+  const sources = new Set([engine, ...ledgerKeys]);
+  const edges = transitions.filter((t) => t.pairs >= MIN_STEP_PAIRS && t.fromKey !== t.toKey);
+  // Shortest summed median to every one of our outputs reachable from the sources (Dijkstra; a handful of nodes).
+  const reach = new Map<string, { median: number; p90: number }>([...sources].map((k) => [k, { median: 0, p90: 0 }]));
+  const done = new Set<string>();
+  for (;;) {
+    const next = [...reach].filter(([k]) => !done.has(k)).sort((x, y) => x[1].median - y[1].median || x[0].localeCompare(y[0]))[0];
+    if (!next) break;
+    const [k, d] = next;
+    done.add(k);
+    for (const t of edges) {
+      if (t.fromKey !== k || !ours.has(t.toKey) || sources.has(t.toKey)) continue;
+      const cand = { median: d.median + t.medianHours, p90: d.p90 + t.p90Hours };
+      const was = reach.get(t.toKey);
+      if (!was || cand.median < was.median) reach.set(t.toKey, cand);
+    }
+  }
+  const results = edges.flatMap((t) => {
+    const d = reach.get(t.fromKey);
+    if (!d || ours.has(t.toKey) || sources.has(t.toKey)) return [];
+    return [{ step: t.toKey, pairs: t.pairs, medianHours: d.median + t.medianHours, p90Hours: d.p90 + t.p90Hours, lastMedianHours: t.medianHours }];
+  });
+  const results2 = results.filter((r) => r.lastMedianHours >= MECHANICAL_MEDIAN_HOURS);
+  if (results2.length === 0) return { step: null, reason: "no_downstream_step_measured" };
+  const readable = results2.filter((r) => maturityDaysOf(r) <= MAX_WINDOW_DAYS);
   if (readable.length === 0) return { step: null, reason: "step_slower_than_window" };
-  const best = [...readable].sort((x, y) => x.medianHours - y.medianHours || y.pairs - x.pairs || x.toKey.localeCompare(y.toKey))[0]!;
-  return { step: { step: best.toKey, pairs: best.pairs, medianHours: best.medianHours, p90Hours: best.p90Hours }, reason: null };
+  const best = [...readable].sort((x, y) => x.medianHours - y.medianHours || y.pairs - x.pairs || x.step.localeCompare(y.step))[0]!;
+  return { step: { step: best.step, pairs: best.pairs, medianHours: best.medianHours, p90Hours: best.p90Hours }, reason: null };
 }
 
 const trackOf = (e: ChangeEvent) => e.engine ?? "\u0000campaign";
@@ -683,8 +712,9 @@ export function campaignChangesOf(input: {
 }): ServedChange[] {
   const events = [...scriptChangeEventsOf(input.rows), ...input.campaignEvents].sort(byTime);
   const keys = ledgerKeysOf(input.rows);
+  const ours = new Set([...keys.values()].flat());
   const picks = new Map<string, StepPick>();
-  const stepOf = (engine: string) => picks.get(engine) ?? picks.set(engine, engineStepOf(engine, keys.get(engine) ?? [], input.transitions)).get(engine)!;
+  const stepOf = (engine: string) => picks.get(engine) ?? picks.set(engine, engineStepOf(engine, keys.get(engine) ?? [], ours, input.transitions)).get(engine)!;
   const sideOf = (e: ChangeEvent, side: ChangeSide | null): ServedSide | null => {
     if (side === null) return null;
     let label: string;
