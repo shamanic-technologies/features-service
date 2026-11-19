@@ -136,7 +136,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
     // read said 0 queued and no reason, so the assistant invented "today's cap is used".
     fetchEmailSendQueue.mockResolvedValue({ ...QUEUE, leadsAwaitingFirstEmail: 0, queuedEmails: 0, firstEmailsFrom: null });
     fetchScheduledFollowups.mockResolvedValue({ ...SCHEDULED, leads: 0, due: 0, upcoming: 0, nextAt: null, byDay: [] });
-    const writer = { outcome: "message_written", pipeCampaignId: "u-mail", reason: "campaign_states_no_brief", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z" };
+    const writer = { outcome: "message_written", pipeCampaignId: "u-mail", reason: "campaign_states_no_brief", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z", expected: false };
     readHeldEngines.mockResolvedValue([writer]);
     const served = (n: number, contacted: boolean) => Array.from({ length: n }, (_, i) => ({ leadId: `${contacted ? "c" : "w"}${i}`, signals: { contacted } }));
     fetchLeadsForRevenue.mockResolvedValue(served(123, false));
@@ -149,8 +149,8 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
   });
 
   it("a held Engine: leads already contacted or queued in the sender are not counted twice; the longest-held Engine is named", async () => {
-    const older = { outcome: "email_sent", pipeCampaignId: "u-mail", reason: "no_runnable_script_kept", heldSince: "2026-11-10T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z" };
-    const newer = { outcome: "message_written", pipeCampaignId: "u-mail", reason: "script_strategy_unreadable", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:41:00.000Z" };
+    const older = { outcome: "email_sent", pipeCampaignId: "u-mail", reason: "no_runnable_script_kept", heldSince: "2026-11-10T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z", expected: false };
+    const newer = { outcome: "message_written", pipeCampaignId: "u-mail", reason: "script_strategy_unreadable", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:41:00.000Z", expected: false };
     readHeldEngines.mockResolvedValue([newer, older]);
     fetchLeadsForRevenue.mockResolvedValue([
       ...Array.from({ length: 20 }, (_, i) => ({ leadId: `w${i}`, signals: { contacted: false } })),
@@ -169,7 +169,7 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/next-steps", () => {
     expect(res.body.heldEnginesUnavailableReason).toBe("engine_answers_unreadable");
     expect(res.body.nextSends).toMatchObject({ leadsQueued: null, unavailableReason: "engine_answers_unreadable" });
 
-    readHeldEngines.mockResolvedValue([{ outcome: "message_written", pipeCampaignId: "u-mail", reason: "campaign_states_no_brief", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z" }]);
+    readHeldEngines.mockResolvedValue([{ outcome: "message_written", pipeCampaignId: "u-mail", reason: "campaign_states_no_brief", heldSince: "2026-11-11T08:00:00.000Z", lastAnsweredAt: "2026-11-11T09:40:00.000Z", expected: false }]);
     fetchLeadsForRevenue.mockRejectedValue(new Error("lead-service down"));
     res = await request(app()).get("/brands/brand-1/sales-funnel-campaigns/sfc-1/next-steps");
     expect(res.body.nextSends).toMatchObject({ leadsQueued: null, unavailableReason: "waiting_leads_unreadable", leadsWaitingOnHeldEngine: null });

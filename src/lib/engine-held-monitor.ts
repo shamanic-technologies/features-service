@@ -37,7 +37,7 @@ const latest = new Map<string, EngineAnswer>();
 export function noteEngineAnswer(campaignId: string, outcome: string, heldReason: string | null, at = Date.now(), expected = false): void {
   latest.set(`${campaignId}|${outcome}`, { campaignId, outcome, heldReason, expected: heldReason !== null && expected, at });
   // NEXT-STEPS-TRUE-REASON-1111: stored too, so the campaign's next-steps read names the Engine that cannot run.
-  void persistEngineAnswer(campaignId, outcome, heldReason, at);
+  void persistEngineAnswer(campaignId, outcome, heldReason, at, expected);
   if (latest.size > 20_000) {
     for (const [k, v] of latest) if (at - v.at > ENGINE_HELD_WINDOW_MS) latest.delete(k);
   }
