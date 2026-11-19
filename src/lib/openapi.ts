@@ -10549,6 +10549,106 @@ const ForecastNextTargetSchema = z.object({
   expectedOneByDate: z.string().nullable().describe("The day the EXPECTED count of Targets made from now reaches one: the mean pace (what cost per Target ÷ budget says, delays included). Earlier than `medianDate` when the yields are poorly known (a few lucky cases pull the mean); null = later than `searchDays`."),
   expectedOneInDays: z.number().nullable(),
 });
+const ChangeSideSchema = z.object({
+  scriptDynasty: z.string().nullable().describe("A script: `<outcome>/<dynasty>`, every version of it; null on a campaign change."),
+  version: z.string().nullable().describe("A script: the version leading that day (`v12`)."),
+  value: z.string().nullable().describe("A campaign change: the value as its owner recorded it (strategy id, Target step key, brief text, `yes`/`no`, funnel id, cap words)."),
+  label: z.string().describe("The side in words a client reads: a script by its dynasty's name (its slug in words when unnamed), a strategy by its name, a Target by its outcome label, a cap as `$10.00 a day`."),
+});
+const ChangeWindowSchema = z.object({
+  fromDay: z.string().nullable().describe("First UTC day counted (matured days only); null = none."),
+  toDay: z.string().nullable(),
+  decisions: z.number().describe("Script decisions of the measured Engine counted in the window."),
+  cases: z.number().describe("Of them, those whose chain reached the step."),
+  rate: z.number().nullable().describe("cases / decisions; null without a decision."),
+});
+const ChangeOutcomeRefSchema = z.object({ outcomeKey: z.string(), label: z.string() });
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{salesFunnelCampaignId}/changes",
+  summary: "What changed on a campaign, dated, each change with its measured result and a verdict",
+  description:
+    "CAMPAIGN-CHANGE-LOG-1119. The changes made on one sales funnel campaign, newest first. KINDS (`kindsServed`), each dated by its owner: SCRIPT changes read off runs-service's stored script decisions of every unit the campaign ever had (a model is a script of the LLM completion Engine, a way of writing a script of the writing Engine), GROUPED by one rule for every Engine: on a day the Engine ran at least `rules.minEngineDayDecisions` decisions, a dynasty SERVES it from `servingEnterShare` of the day and stops under `servingLeaveShare` (`script_started` / `script_stopped`); a serving dynasty whose leading version changes, the new one carrying `servingEnterShare` of the day, is `script_upgraded`; at least `triedMinScripts` non-serving dynasties carrying `triedShare` of the day are ONE `scripts_tried` line. CAMPAIGN changes copied from their owners: `budget_changed` (billing: the cap it is held to), `campaign_stopped` / `campaign_resumed` (campaign-service, grouped per minute; `reason` = the stop reason, `parts` = units moved of its units), `plan_changed`, `brief_changed`, `target_changed`, `follows_plan_changed` (campaign-service; the last three recorded since `settingsRecordedSince`), `strategy_changed` (the strategy kept per Engine, recorded since `settingsRecordedSince`). RESULT, one rule: measured on the change's Engine (a campaign-wide change: the campaign's Engine with the most decisions in the `campaignEngineSpanDays` around it); step = the nearest downstream step of that Engine with volume (Silver's fleet transitions out of it measured on at least `minStepPairs` linked pairs, shortest median delay); rate = decisions whose chain reached the step / decisions, on the decisions the change could affect (the changed script's own; the Engine's whole for a campaign or strategy change); maturity = the step's fleet p90 delay in whole days, a decision day counting once that old (censoring); window = `windowMaturityMultiple` x maturity, from `minWindowDays` to `maxWindowDays`, cut at the same track's previous / next change. VERDICT: each side's rate blended toward both sides pooled at `blendPseudoCases` cases (Gamma-Poisson), P(after > before) exact: `worked` from `verdictThresholds.worked`, `partial` from `.partial`, `did_not_work` up to `.didNotWork`, else `inconclusive`. Before any test, in order: `inconclusive` no_downstream_step_measured; `too_early` (no matured decision after: `measuredOn`) or `inconclusive` no_decisions_after (the after window matured empty); `inconclusive` nothing_before_to_compare; `confounded` (another track changed inside a window: `confoundedWith`); `inconclusive` thin_evidence (under `thinCases` cases in all or `thinDecisions` decisions on a side). WHO, positive evidence only: `our_ai` (the Rating picks a script; our judge keeps a strategy from the brief; the plan follower; the brief written from the offer), `a_person` (a signed-in person's edit, start or stop: you or our team, the record does not say which), `our_system` (billing could not charge; a value read off its funnel), null = not said. No spend is served: a cap is a ceiling and is never discounted. Every figure is served: the page computes none. Stored as a Gold cell, recomputed behind a read at most every 10 minutes.",
+  tags: ["Stats"],
+  request: {
+    params: z.object({ brandId: z.string(), salesFunnelCampaignId: z.string() }),
+    query: z.object({ limit: z.string().describe("Lines per page, 1..200, default 50.").optional(), cursor: z.string().describe("`nextCursor` of the previous page.").optional() }),
+  },
+  responses: {
+    200: {
+      description: "The changes, newest first",
+      content: {
+        "application/json": {
+          schema: z.object({
+            brandId: z.string(),
+            salesFunnelCampaignId: z.string(),
+            name: z.string(),
+            computedAt: z.string(),
+            decisionsBuiltAt: z.string().nullable().describe("When runs-service last built the script decisions read; null = the campaign has no unit campaign."),
+            silverComputedAt: z.string().nullable().describe("The Silver sweep the steps and delays come from; null = none on today's rule (every change: no_downstream_step_measured)."),
+            settingsRecordedSince: z.string().describe("Brief, Target, follows-its-plan and strategy changes are recorded from this UTC day only: before it, none is invented."),
+            rules: z
+              .object({
+                minEngineDayDecisions: z.number(),
+                servingEnterShare: z.number(),
+                servingLeaveShare: z.number(),
+                triedShare: z.number(),
+                triedMinScripts: z.number(),
+                minStepPairs: z.number(),
+                windowMaturityMultiple: z.number(),
+                minWindowDays: z.number(),
+                maxWindowDays: z.number(),
+                campaignEngineSpanDays: z.number(),
+                blendPseudoCases: z.number(),
+                thinCases: z.number(),
+                thinDecisions: z.number(),
+                verdictThresholds: z.object({ worked: z.number(), partial: z.number(), didNotWork: z.number() }),
+              })
+              .describe("The numbers the list was built on: word them from here, never restate one."),
+            kindsServed: z.array(z.string()).describe("The kinds of change this build reads."),
+            total: z.number().describe("Lines in the whole list."),
+            changes: z.array(
+              z.object({
+                id: z.string(),
+                at: z.string().describe("When it happened (ISO); a script change: its UTC day at midnight."),
+                date: z.string().describe("UTC day of the change."),
+                kind: z.enum(["script_started", "script_stopped", "script_upgraded", "scripts_tried", "budget_changed", "campaign_stopped", "campaign_resumed", "plan_changed", "brief_changed", "target_changed", "follows_plan_changed", "strategy_changed"]),
+                engine: ChangeOutcomeRefSchema.nullable().describe("The Engine the change is on (the outcome it makes); null = the whole campaign."),
+                from: ChangeSideSchema.nullable(),
+                to: ChangeSideSchema.nullable(),
+                summary: z.string().describe("The change in words a client reads."),
+                who: z.enum(["our_ai", "a_person", "our_system"]).nullable().describe("Who made it, from positive evidence only; null = the record does not say."),
+                whoEvidence: z.string().nullable().describe("The evidence `who` rests on (the_rating_picks_the_script, changed_by_a_signed_in_person, started_or_stopped_by_hand, billing_could_not_charge, the_plan_follower_applied_its_plan, written_by_our_ai_from_the_offer, read_off_its_funnel, our_judge_keeps_it_from_the_brief, carried_from_the_campaign_play)."),
+                reason: z.string().nullable().describe("What the owner recorded about why: a stop reason (manual, payment_declined, no_payment_method, ...), a plan change reason."),
+                shareOfEngineDay: z.number().nullable().describe("Script changes: share of the Engine's decisions that day carried by what the line is about."),
+                tried: z.object({ scripts: z.number(), decisions: z.number() }).nullable().describe("`scripts_tried`: how many dynasties, and their decisions that day."),
+                parts: z.union([z.object({ moved: z.number(), total: z.number() }), z.object({ added: z.number(), retired: z.number() })]).nullable().describe("Pause / resume: units moved of the units it had; plan change: units added and retired."),
+                result: z.object({
+                  measuredEngine: ChangeOutcomeRefSchema.nullable().describe("The Engine whose decisions were measured."),
+                  step: ChangeOutcomeRefSchema.nullable().describe("The step measured; null = none measured downstream of the Engine."),
+                  maturityDays: z.number().nullable().describe("A decision day counts once it is this many days old (the step's fleet p90 delay)."),
+                  windowDays: z.number().nullable().describe("Days on each side of the change, before cuts at the same track's previous / next change."),
+                  before: ChangeWindowSchema.nullable(),
+                  after: ChangeWindowSchema.nullable(),
+                  changePct: z.number().nullable().describe("(rate after - rate before) / rate before, in %; null when either is missing or the rate before is 0."),
+                  probabilityBetter: z.number().nullable().describe("P(the rate after is higher than before); null = not tested."),
+                  verdict: z.enum(["worked", "partial", "did_not_work", "inconclusive", "too_early", "confounded"]),
+                  verdictReason: z.enum(["no_downstream_step_measured", "no_decisions_after", "nothing_before_to_compare", "thin_evidence", "after_window_not_matured", "another_change_in_the_window", "tested"]),
+                  measuredOn: z.string().nullable().describe("`too_early`: the first UTC day a rate after the change can be read."),
+                  confoundedWith: z.array(z.string()).describe("`confounded`: ids of the other changes inside its windows."),
+                }),
+              }),
+            ),
+            nextCursor: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    400: { description: "Bad limit or cursor" },
+    404: { description: "Unknown brand or campaign" },
+    502: { description: "A source could not be read" },
+  },
+});
 const ForecastSourceSchema = z.enum(["campaign", "brand", "fleet", "plan", "default"]).describe("Where the figure comes from, by the owner's order: the campaign's own measure, else its brand's, else the fleet's, else the campaign's plan line (stated and default rates), else a named default.");
 const ForecastOutputSchema = z.object({
   days: z.array(z.string()).describe("The UTC days after today (18 months), one per point of every series."),

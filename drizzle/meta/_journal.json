@@ -554,6 +554,13 @@
       "when": 1795795200000,
       "tag": "0078_serve_tactics_decided_by_serve",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1795881600000,
+      "tag": "0079_campaign_engine_strategy_changes",
+      "breakpoints": true
     }
   ]
 }

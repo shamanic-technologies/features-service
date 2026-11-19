@@ -1098,6 +1098,30 @@ export const campaignEngineStrategies = pgTable(
 export type CampaignEngineStrategyRow = typeof campaignEngineStrategies.$inferSelect;
 
 /**
+ * CAMPAIGN-CHANGE-LOG-1119 (migration 0079): every change of the strategy kept per (unit campaign, Engine), appended by
+ * `writeEngineStrategy` when the kept strategy moves (a re-judgement keeping the same one is no row). Append-only;
+ * before 0079 = not recorded.
+ */
+export const campaignEngineStrategyChanges = pgTable(
+  "campaign_engine_strategy_changes",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    campaignId: text("campaign_id").notNull(),
+    outcome: text("outcome").notNull(),
+    orgId: text("org_id").notNull(),
+    /** null = none kept before (first judgement, or the Engine followed no strategy). */
+    fromStrategyId: text("from_strategy_id"),
+    toStrategyId: text("to_strategy_id"),
+    /** The kept row's `source` after the change: `carried` | `judge` | `empty_brief`. */
+    source: text("source").notNull(),
+    confidence: doublePrecision("confidence"),
+    model: text("model"),
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("campaign_engine_strategy_changes_campaign_idx").on(table.campaignId, table.changedAt)],
+);
+
+/**
  * NEXT-STEPS-TRUE-REASON-1111: the latest answer the Engine runner got per (pipe campaign, Engine) from
  * `/internal/script-strategy`, so the campaign's next-steps read can name the Engine that cannot run (any process, any
  * restart). `held_reason` null = it could run; `first_held_at` = start of the current refusal streak.

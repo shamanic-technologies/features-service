@@ -6,9 +6,9 @@
  * the campaign's brief moved, stored again. `legacy` = the campaign holds no verdict on this Engine yet (only until the
  * S6 migration carried every live campaign; then a campaign born without one is judged on its first read).
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { campaignEngineStrategies } from "../db/schema.js";
+import { campaignEngineStrategies, campaignEngineStrategyChanges } from "../db/schema.js";
 import { loadChannelCatalogue } from "./channel-declarations-store.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { fetchCampaignPipe } from "./fleet-leg-campaigns.js";
@@ -63,11 +63,33 @@ export async function listEngineStrategies(campaignId: string | null): Promise<S
 
 export async function writeEngineStrategy(row: Omit<StoredEngineStrategy, "judgedAt">): Promise<void> {
   const values = { ...row, judgedAt: new Date() };
+  // CAMPAIGN-CHANGE-LOG-1119: the kept strategy moving is appended to its history (read before, write, append).
+  const before = await readEngineStrategy(row.campaignId, row.outcome);
   await db
     .insert(campaignEngineStrategies)
     .values(values)
     .onConflictDoUpdate({ target: [campaignEngineStrategies.campaignId, campaignEngineStrategies.outcome], set: values });
+  const change = strategyChangeOf(before, row);
+  if (change) await db.insert(campaignEngineStrategyChanges).values({ ...change, changedAt: values.judgedAt });
   forgetEngineStrategy(row.campaignId, row.outcome);
+}
+
+/** PURE. The history row a write appends: only when the kept strategy MOVES (first judgement naming none = no row). */
+export function strategyChangeOf(before: { strategyId: string | null } | null, after: Omit<StoredEngineStrategy, "judgedAt">) {
+  const from = before?.strategyId ?? null;
+  if (from === after.strategyId) return null;
+  return { campaignId: after.campaignId, outcome: after.outcome, orgId: after.orgId, fromStrategyId: from, toStrategyId: after.strategyId, source: after.source, confidence: after.confidence, model: after.model };
+}
+
+/** Every recorded change of the strategies kept for these unit campaigns, oldest first. */
+export async function listEngineStrategyChanges(campaignIds: readonly string[]) {
+  if (campaignIds.length === 0) return [];
+  const rows = await db
+    .select()
+    .from(campaignEngineStrategyChanges)
+    .where(inArray(campaignEngineStrategyChanges.campaignId, [...campaignIds]))
+    .orderBy(asc(campaignEngineStrategyChanges.changedAt), asc(campaignEngineStrategyChanges.id));
+  return rows.map((r) => ({ ...r, changedAt: r.changedAt.toISOString() }));
 }
 
 // ── The Engine a campaign unit runs (its pipe's outcome, read off the catalogue, never parsed) ──────────────────────
