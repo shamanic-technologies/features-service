@@ -9250,6 +9250,120 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/stats/client-financials (DISTRY-PRINCIPAL-1119) ──────────
+
+const cfMoneyPair = z.object({
+  net: z.number().describe("What the org pays, after its usage discount (USD)."),
+  beforeDiscount: z.number().describe("The same at list price, before the org's usage discount (USD)."),
+});
+const cfCost = z.object({
+  total: z.number().describe("vendorOnChargedSpend + vendorOnRefundedSpend + cardFees (USD). Never discounted."),
+  vendorOnChargedSpend: z.number().describe("What the vendors charged us for the org's platform cost rows we charged it for (runs-service margin read)."),
+  vendorOnRefundedSpend: z.number().describe("What the vendors charged us for spend we refunded to the org (it happened, we did not charge it)."),
+  cardFees: z.number().describe("Card acquiring fees of the org's payments, USD (billing)."),
+  vendorCostUnknownOnUsd: z.number().describe("Billed spend of the org with no vendor cost on record (not in total)."),
+});
+const cfRow = registry.register(
+  "ClientFinancialRow",
+  z.object({
+    orgId: z.string(),
+    orgName: z.string().nullable(),
+    customerStatus: z.enum(["current", "churned", "never_paid"]).nullable().describe("billing's verdict, copied."),
+    orgDeleted: z.boolean(),
+    ownOrg: z.boolean().describe("billing's own-org flag (platform, staff, staff test org, kevin@pressbeat.io)."),
+    ownOrgReason: z.string().nullable(),
+    agency: z.boolean().describe("The org holds owner-stated monthly amounts: pays off-platform; its revenue is those amounts accrued, its on-platform charges are shown beside, not added."),
+    statedAmountsAccruedUsd: z.number().nullable().describe("Agency only: the stated monthly amounts accrued per day in force to date (amount x 12 / 365 a day) = revenueUsd.net. Null for any other org."),
+    hasBillingAccount: z.boolean(),
+    revenueUsd: cfMoneyPair.describe("Cash-funded part of what billing charged the org, since inception. 0 for an org that never paid."),
+    costUsd: cfCost,
+    marginUsd: cfMoneyPair.nullable().describe("revenueUsd - costUsd.total. Negative when the org costs more than it pays. Null only with marginUnavailableReason."),
+    marginPct: z.object({ net: z.number().nullable(), beforeDiscount: z.number().nullable() }).nullable().describe("Margin / revenue x 100; null when revenue is 0 (marginPctUnavailableReason)."),
+    marginUnavailableReason: z.enum(["vendor_cost_unknown"]).nullable(),
+    marginPctUnavailableReason: z.enum(["no_revenue", "vendor_cost_unknown"]).nullable(),
+    consumedUsd: cfMoneyPair.describe("Platform spend of the org in the cost ledger (charged rows), net and at list price."),
+    chargedUsd: z.number().describe("What billing debited the org: credited - actual balance."),
+    refundedSpendUsd: z.number().describe("Spend we refunded (at list price)."),
+    cashPaidUsd: z.number().describe("Cash the org paid us (net of refunds), billing."),
+    creditGivenUsd: z.number().describe("Credit the org received without paying (gifts, advances not repaid), billing."),
+    cashShare: z.number().nullable().describe("cash / (cash + credit given); null when the org was credited nothing."),
+    balanceUsd: z.number().describe("What the org still holds on its account (credited - charged)."),
+    spendableBalanceUsd: z.number().describe("Its balance after holds for work in flight."),
+    cardFeesOtherCurrencies: z.array(z.object({ currency: z.string(), feeCents: z.string() })).describe("Fees billing could not convert to USD, in no figure."),
+  }),
+);
+const cfTotals = z.object({
+  clients: z.number().int(),
+  clientsWithRevenue: z.number().int(),
+  clientsWithNegativeMargin: z.number().int(),
+  clientsWithMarginUnknown: z.number().int(),
+  revenueUsd: cfMoneyPair,
+  costUsd: cfCost,
+  marginUsd: cfMoneyPair.describe("Sum of the rows' margins (rows with a margin)."),
+  marginPct: z.object({ net: z.number().nullable(), beforeDiscount: z.number().nullable() }),
+  consumedUsd: cfMoneyPair,
+  chargedUsd: z.number(),
+  refundedSpendUsd: z.number(),
+  cashPaidUsd: z.number(),
+  creditGivenUsd: z.number(),
+  balanceUsd: z.number().describe("What these orgs still hold on their accounts."),
+  spendableBalanceUsd: z.number(),
+});
+const cfBody = registry.register(
+  "ClientFinancials",
+  z.object({
+    computedAt: z.string(),
+    basis: z.object({
+      window: z.literal("since_inception"),
+      money: z.string(),
+      revenue: z.string(),
+      cost: z.string(),
+      margin: z.string(),
+      excluded: z.string(),
+    }).describe("Every rule in plain words."),
+    totals: cfTotals.describe("The SUM of clients[], cent for cent."),
+    clients: z.array(cfRow).describe("Every org that is not ours, revenue (net) desc, then cost desc."),
+    ownOrgs: z.array(cfRow).describe("Our own orgs, listed apart, in no client total."),
+    ownOrgsTotals: cfTotals,
+    unreadOrgs: z.array(z.object({ orgId: z.string(), orgName: z.string().nullable(), reason: z.string() })).describe("Orgs whose reads failed: in no row, no total."),
+    recurringRevenue: z.object({
+      mrrUsd: z.number().nullable().describe("billing's MRR over the client orgs (read, never re-derived)."),
+      arrUsd: z.number().nullable(),
+      payingOrgs: z.number().int().nullable().describe("Client orgs with MRR > 0."),
+      mrrUnknownOrgIds: z.array(z.string()),
+      unavailableReason: z.string().nullable(),
+    }),
+    agencyBasisUnknown: z.boolean().describe("True when the stated monthly amounts could not be read: no org is treated as agency (an agency then reads its on-platform charges)."),
+    ledgerCoverage: z.object({
+      fleetBilledUsd: z.number(),
+      fleetVendorCostUsd: z.number(),
+      listedBilledUsd: z.number(),
+      listedVendorCostUsd: z.number(),
+      notOnAnyListedOrgBilledUsd: z.number(),
+      notOnAnyListedOrgVendorCostUsd: z.number(),
+    }).nullable().describe("The ledger's whole platform spend vs every listed org (clients + own): what no listed org holds."),
+    ledgerCoverageUnavailableReason: z.string().nullable(),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/client-financials",
+  summary: "Per client revenue, cost and margin since inception, plus fleet totals (internal, api-key, staff only)",
+  description:
+    "For Distry, the AI CEO (DISTRY-PRINCIPAL-1119), and staff. Revenue = the cash-funded part of what billing charged each org; " +
+    "cost = what the vendors charged us for the org's platform spend (charged and refunded rows) + card fees; margin = revenue - cost, " +
+    "negative for a client that paid nothing. Net (what the org pays) and before-discount beside it. Our own orgs listed apart. " +
+    "Served from the last build (15 min), rebuilt behind; never built = 503 while the first build runs (~2 min). Staff-gated at api-service.",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "The client list and the totals.", content: { "application/json": { schema: cfBody } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "The stored copy could not be read or served", content: { "application/json": { schema: errorResponse } } },
+    503: { description: "client_financials_not_computed_yet: the first build runs behind (about 2 minutes); retry.", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── Security scheme ──────────────────────────────────────────────────────
 
 registry.registerComponent("securitySchemes", "ApiKeyAuth", {
