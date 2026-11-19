@@ -54,6 +54,7 @@ import { startOutcomeSilverLoop } from "./lib/outcome-silver-io.js";
 import scriptEnginesRoutes, { startScriptEnginesLoop, warmScriptEngines } from "./routes/script-engines.js";
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
+import clientFinancialsRoutes from "./routes/client-financials.js";
 import boxHealthRoutes from "./routes/box-health.js";
 import boxChecksRoutes from "./routes/box-checks.js";
 import factoryShadowRoutes, { startFactoryShadowLoop } from "./routes/factory-shadow.js";
@@ -171,6 +172,7 @@ app.use(campaignChangesRoutes);
 app.use(campaignEngineScriptsRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
+app.use(clientFinancialsRoutes);
 
 // 404 handler
 app.use((req, res) => {

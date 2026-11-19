@@ -36654,6 +36654,729 @@
           "repos"
         ]
       },
+      "ClientFinancialRow": {
+        "type": "object",
+        "properties": {
+          "orgId": {
+            "type": "string"
+          },
+          "orgName": {
+            "type": "string",
+            "nullable": true
+          },
+          "customerStatus": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "current",
+              "churned",
+              "never_paid",
+              null
+            ],
+            "description": "billing's verdict, copied."
+          },
+          "orgDeleted": {
+            "type": "boolean"
+          },
+          "ownOrg": {
+            "type": "boolean",
+            "description": "billing's own-org flag (platform, staff, staff test org, kevin@pressbeat.io)."
+          },
+          "ownOrgReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "agency": {
+            "type": "boolean",
+            "description": "The org holds owner-stated monthly amounts: pays off-platform; its revenue is those amounts accrued, its on-platform charges are shown beside, not added."
+          },
+          "statedAmountsAccruedUsd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Agency only: the stated monthly amounts accrued per day in force to date (amount x 12 / 365 a day) = revenueUsd.net. Null for any other org."
+          },
+          "hasBillingAccount": {
+            "type": "boolean"
+          },
+          "revenueUsd": {
+            "type": "object",
+            "properties": {
+              "net": {
+                "type": "number",
+                "description": "What the org pays, after its usage discount (USD)."
+              },
+              "beforeDiscount": {
+                "type": "number",
+                "description": "The same at list price, before the org's usage discount (USD)."
+              }
+            },
+            "required": [
+              "net",
+              "beforeDiscount"
+            ],
+            "description": "Cash-funded part of what billing charged the org, since inception. 0 for an org that never paid."
+          },
+          "costUsd": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number",
+                "description": "vendorOnChargedSpend + vendorOnRefundedSpend + cardFees (USD). Never discounted."
+              },
+              "vendorOnChargedSpend": {
+                "type": "number",
+                "description": "What the vendors charged us for the org's platform cost rows we charged it for (runs-service margin read)."
+              },
+              "vendorOnRefundedSpend": {
+                "type": "number",
+                "description": "What the vendors charged us for spend we refunded to the org (it happened, we did not charge it)."
+              },
+              "cardFees": {
+                "type": "number",
+                "description": "Card acquiring fees of the org's payments, USD (billing)."
+              },
+              "vendorCostUnknownOnUsd": {
+                "type": "number",
+                "description": "Billed spend of the org with no vendor cost on record (not in total)."
+              }
+            },
+            "required": [
+              "total",
+              "vendorOnChargedSpend",
+              "vendorOnRefundedSpend",
+              "cardFees",
+              "vendorCostUnknownOnUsd"
+            ]
+          },
+          "marginUsd": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "net": {
+                "type": "number",
+                "description": "What the org pays, after its usage discount (USD)."
+              },
+              "beforeDiscount": {
+                "type": "number",
+                "description": "The same at list price, before the org's usage discount (USD)."
+              }
+            },
+            "required": [
+              "net",
+              "beforeDiscount"
+            ],
+            "description": "revenueUsd - costUsd.total. Negative when the org costs more than it pays. Null only with marginUnavailableReason."
+          },
+          "marginPct": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "net": {
+                "type": "number",
+                "nullable": true
+              },
+              "beforeDiscount": {
+                "type": "number",
+                "nullable": true
+              }
+            },
+            "required": [
+              "net",
+              "beforeDiscount"
+            ],
+            "description": "Margin / revenue x 100; null when revenue is 0 (marginPctUnavailableReason)."
+          },
+          "marginUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "vendor_cost_unknown",
+              null
+            ]
+          },
+          "marginPctUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "no_revenue",
+              "vendor_cost_unknown",
+              null
+            ]
+          },
+          "consumedUsd": {
+            "type": "object",
+            "properties": {
+              "net": {
+                "type": "number",
+                "description": "What the org pays, after its usage discount (USD)."
+              },
+              "beforeDiscount": {
+                "type": "number",
+                "description": "The same at list price, before the org's usage discount (USD)."
+              }
+            },
+            "required": [
+              "net",
+              "beforeDiscount"
+            ],
+            "description": "Platform spend of the org in the cost ledger (charged rows), net and at list price."
+          },
+          "chargedUsd": {
+            "type": "number",
+            "description": "What billing debited the org: credited - actual balance."
+          },
+          "refundedSpendUsd": {
+            "type": "number",
+            "description": "Spend we refunded (at list price)."
+          },
+          "cashPaidUsd": {
+            "type": "number",
+            "description": "Cash the org paid us (net of refunds), billing."
+          },
+          "creditGivenUsd": {
+            "type": "number",
+            "description": "Credit the org received without paying (gifts, advances not repaid), billing."
+          },
+          "cashShare": {
+            "type": "number",
+            "nullable": true,
+            "description": "cash / (cash + credit given); null when the org was credited nothing."
+          },
+          "balanceUsd": {
+            "type": "number",
+            "description": "What the org still holds on its account (credited - charged)."
+          },
+          "spendableBalanceUsd": {
+            "type": "number",
+            "description": "Its balance after holds for work in flight."
+          },
+          "cardFeesOtherCurrencies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "type": "string"
+                },
+                "feeCents": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "currency",
+                "feeCents"
+              ]
+            },
+            "description": "Fees billing could not convert to USD, in no figure."
+          }
+        },
+        "required": [
+          "orgId",
+          "orgName",
+          "customerStatus",
+          "orgDeleted",
+          "ownOrg",
+          "ownOrgReason",
+          "agency",
+          "statedAmountsAccruedUsd",
+          "hasBillingAccount",
+          "revenueUsd",
+          "costUsd",
+          "marginUsd",
+          "marginPct",
+          "marginUnavailableReason",
+          "marginPctUnavailableReason",
+          "consumedUsd",
+          "chargedUsd",
+          "refundedSpendUsd",
+          "cashPaidUsd",
+          "creditGivenUsd",
+          "cashShare",
+          "balanceUsd",
+          "spendableBalanceUsd",
+          "cardFeesOtherCurrencies"
+        ]
+      },
+      "ClientFinancials": {
+        "type": "object",
+        "properties": {
+          "computedAt": {
+            "type": "string"
+          },
+          "basis": {
+            "type": "object",
+            "properties": {
+              "window": {
+                "type": "string",
+                "enum": [
+                  "since_inception"
+                ]
+              },
+              "money": {
+                "type": "string"
+              },
+              "revenue": {
+                "type": "string"
+              },
+              "cost": {
+                "type": "string"
+              },
+              "margin": {
+                "type": "string"
+              },
+              "excluded": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "window",
+              "money",
+              "revenue",
+              "cost",
+              "margin",
+              "excluded"
+            ],
+            "description": "Every rule in plain words."
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "clients": {
+                "type": "integer"
+              },
+              "clientsWithRevenue": {
+                "type": "integer"
+              },
+              "clientsWithNegativeMargin": {
+                "type": "integer"
+              },
+              "clientsWithMarginUnknown": {
+                "type": "integer"
+              },
+              "revenueUsd": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "description": "What the org pays, after its usage discount (USD)."
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "description": "The same at list price, before the org's usage discount (USD)."
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ]
+              },
+              "costUsd": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "number",
+                    "description": "vendorOnChargedSpend + vendorOnRefundedSpend + cardFees (USD). Never discounted."
+                  },
+                  "vendorOnChargedSpend": {
+                    "type": "number",
+                    "description": "What the vendors charged us for the org's platform cost rows we charged it for (runs-service margin read)."
+                  },
+                  "vendorOnRefundedSpend": {
+                    "type": "number",
+                    "description": "What the vendors charged us for spend we refunded to the org (it happened, we did not charge it)."
+                  },
+                  "cardFees": {
+                    "type": "number",
+                    "description": "Card acquiring fees of the org's payments, USD (billing)."
+                  },
+                  "vendorCostUnknownOnUsd": {
+                    "type": "number",
+                    "description": "Billed spend of the org with no vendor cost on record (not in total)."
+                  }
+                },
+                "required": [
+                  "total",
+                  "vendorOnChargedSpend",
+                  "vendorOnRefundedSpend",
+                  "cardFees",
+                  "vendorCostUnknownOnUsd"
+                ]
+              },
+              "marginUsd": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "description": "What the org pays, after its usage discount (USD)."
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "description": "The same at list price, before the org's usage discount (USD)."
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ],
+                "description": "Sum of the rows' margins (rows with a margin)."
+              },
+              "marginPct": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ]
+              },
+              "consumedUsd": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "description": "What the org pays, after its usage discount (USD)."
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "description": "The same at list price, before the org's usage discount (USD)."
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ]
+              },
+              "chargedUsd": {
+                "type": "number"
+              },
+              "refundedSpendUsd": {
+                "type": "number"
+              },
+              "cashPaidUsd": {
+                "type": "number"
+              },
+              "creditGivenUsd": {
+                "type": "number"
+              },
+              "balanceUsd": {
+                "type": "number",
+                "description": "What these orgs still hold on their accounts."
+              },
+              "spendableBalanceUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "clients",
+              "clientsWithRevenue",
+              "clientsWithNegativeMargin",
+              "clientsWithMarginUnknown",
+              "revenueUsd",
+              "costUsd",
+              "marginUsd",
+              "marginPct",
+              "consumedUsd",
+              "chargedUsd",
+              "refundedSpendUsd",
+              "cashPaidUsd",
+              "creditGivenUsd",
+              "balanceUsd",
+              "spendableBalanceUsd"
+            ],
+            "description": "The SUM of clients[], cent for cent."
+          },
+          "clients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientFinancialRow"
+            },
+            "description": "Every org that is not ours, revenue (net) desc, then cost desc."
+          },
+          "ownOrgs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientFinancialRow"
+            },
+            "description": "Our own orgs, listed apart, in no client total."
+          },
+          "ownOrgsTotals": {
+            "type": "object",
+            "properties": {
+              "clients": {
+                "type": "integer"
+              },
+              "clientsWithRevenue": {
+                "type": "integer"
+              },
+              "clientsWithNegativeMargin": {
+                "type": "integer"
+              },
+              "clientsWithMarginUnknown": {
+                "type": "integer"
+              },
+              "revenueUsd": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "description": "What the org pays, after its usage discount (USD)."
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "description": "The same at list price, before the org's usage discount (USD)."
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ]
+              },
+              "costUsd": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "number",
+                    "description": "vendorOnChargedSpend + vendorOnRefundedSpend + cardFees (USD). Never discounted."
+                  },
+                  "vendorOnChargedSpend": {
+                    "type": "number",
+                    "description": "What the vendors charged us for the org's platform cost rows we charged it for (runs-service margin read)."
+                  },
+                  "vendorOnRefundedSpend": {
+                    "type": "number",
+                    "description": "What the vendors charged us for spend we refunded to the org (it happened, we did not charge it)."
+                  },
+                  "cardFees": {
+                    "type": "number",
+                    "description": "Card acquiring fees of the org's payments, USD (billing)."
+                  },
+                  "vendorCostUnknownOnUsd": {
+                    "type": "number",
+                    "description": "Billed spend of the org with no vendor cost on record (not in total)."
+                  }
+                },
+                "required": [
+                  "total",
+                  "vendorOnChargedSpend",
+                  "vendorOnRefundedSpend",
+                  "cardFees",
+                  "vendorCostUnknownOnUsd"
+                ]
+              },
+              "marginUsd": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "description": "What the org pays, after its usage discount (USD)."
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "description": "The same at list price, before the org's usage discount (USD)."
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ],
+                "description": "Sum of the rows' margins (rows with a margin)."
+              },
+              "marginPct": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ]
+              },
+              "consumedUsd": {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "number",
+                    "description": "What the org pays, after its usage discount (USD)."
+                  },
+                  "beforeDiscount": {
+                    "type": "number",
+                    "description": "The same at list price, before the org's usage discount (USD)."
+                  }
+                },
+                "required": [
+                  "net",
+                  "beforeDiscount"
+                ]
+              },
+              "chargedUsd": {
+                "type": "number"
+              },
+              "refundedSpendUsd": {
+                "type": "number"
+              },
+              "cashPaidUsd": {
+                "type": "number"
+              },
+              "creditGivenUsd": {
+                "type": "number"
+              },
+              "balanceUsd": {
+                "type": "number",
+                "description": "What these orgs still hold on their accounts."
+              },
+              "spendableBalanceUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "clients",
+              "clientsWithRevenue",
+              "clientsWithNegativeMargin",
+              "clientsWithMarginUnknown",
+              "revenueUsd",
+              "costUsd",
+              "marginUsd",
+              "marginPct",
+              "consumedUsd",
+              "chargedUsd",
+              "refundedSpendUsd",
+              "cashPaidUsd",
+              "creditGivenUsd",
+              "balanceUsd",
+              "spendableBalanceUsd"
+            ]
+          },
+          "unreadOrgs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string"
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "orgId",
+                "orgName",
+                "reason"
+              ]
+            },
+            "description": "Orgs whose reads failed: in no row, no total."
+          },
+          "recurringRevenue": {
+            "type": "object",
+            "properties": {
+              "mrrUsd": {
+                "type": "number",
+                "nullable": true,
+                "description": "billing's MRR over the client orgs (read, never re-derived)."
+              },
+              "arrUsd": {
+                "type": "number",
+                "nullable": true
+              },
+              "payingOrgs": {
+                "type": "integer",
+                "nullable": true,
+                "description": "Client orgs with MRR > 0."
+              },
+              "mrrUnknownOrgIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "unavailableReason": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "mrrUsd",
+              "arrUsd",
+              "payingOrgs",
+              "mrrUnknownOrgIds",
+              "unavailableReason"
+            ]
+          },
+          "agencyBasisUnknown": {
+            "type": "boolean",
+            "description": "True when the stated monthly amounts could not be read: no org is treated as agency (an agency then reads its on-platform charges)."
+          },
+          "ledgerCoverage": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "fleetBilledUsd": {
+                "type": "number"
+              },
+              "fleetVendorCostUsd": {
+                "type": "number"
+              },
+              "listedBilledUsd": {
+                "type": "number"
+              },
+              "listedVendorCostUsd": {
+                "type": "number"
+              },
+              "notOnAnyListedOrgBilledUsd": {
+                "type": "number"
+              },
+              "notOnAnyListedOrgVendorCostUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "fleetBilledUsd",
+              "fleetVendorCostUsd",
+              "listedBilledUsd",
+              "listedVendorCostUsd",
+              "notOnAnyListedOrgBilledUsd",
+              "notOnAnyListedOrgVendorCostUsd"
+            ],
+            "description": "The ledger's whole platform spend vs every listed org (clients + own): what no listed org holds."
+          },
+          "ledgerCoverageUnavailableReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "computedAt",
+          "basis",
+          "totals",
+          "clients",
+          "ownOrgs",
+          "ownOrgsTotals",
+          "unreadOrgs",
+          "recurringRevenue",
+          "agencyBasisUnknown",
+          "ledgerCoverage",
+          "ledgerCoverageUnavailableReason"
+        ]
+      },
       "BoxHealthView": {
         "type": "object",
         "properties": {
@@ -75966,6 +76689,81 @@
           },
           "401": {
             "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/client-financials": {
+      "get": {
+        "summary": "Per client revenue, cost and margin since inception, plus fleet totals (internal, api-key, staff only)",
+        "description": "For Distry, the AI CEO (DISTRY-PRINCIPAL-1119), and staff. Revenue = the cash-funded part of what billing charged each org; cost = what the vendors charged us for the org's platform spend (charged and refunded rows) + card fees; margin = revenue - cost, negative for a client that paid nothing. Net (what the org pays) and before-discount beside it. Our own orgs listed apart. Served from the last build (15 min), rebuilt behind; never built = 503 while the first build runs (~2 min). Staff-gated at api-service.",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The client list and the totals.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientFinancials"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The stored copy could not be read or served",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "client_financials_not_computed_yet: the first build runs behind (about 2 minutes); retry.",
             "content": {
               "application/json": {
                 "schema": {
