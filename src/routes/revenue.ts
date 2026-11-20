@@ -74,7 +74,7 @@ import {
   causeByOutcomeOf,
 } from "../lib/revenue-engine.js";
 import { traceEvent } from "../lib/trace-event.js";
-import { servedCachedJson, sendSnapshotJson, buildScopeKey, SnapshotJson } from "../lib/view-cache.js";
+import { servedCachedJson, sendSnapshotJson, buildScopeKey, SnapshotJson, derivedSnapshotJson } from "../lib/view-cache.js";
 import { pendingRefreshTarget } from "../lib/view-refresher.js";
 import { servedJsonTextOf } from "../lib/served-leg-keys.js";
 import { expectedReturnForBrand, expectedReturnForCampaign, expectedReturnForOffer } from "../lib/expected-return.js";
@@ -3000,7 +3000,9 @@ router.get("/brands/:brandId/campaign-revenue", apiKeyAuth, async (req, res) => 
           causes,
           causeKey,
         });
-        return servedJsonTextOf(payload.json, slug);
+        // Re-spelled once per stored body, remembered beside it on a hot body (MON-PAGE-SPEED-FLOOR-1120: a JSON
+        // parse + walk + stringify of every channel's body on every poll held the serving loop).
+        return derivedSnapshotJson(payload, `served-channel:${slug}`, (text) => servedJsonTextOf(text, slug)).json;
       } catch (error) {
         if (error instanceof BrandOwnershipError) throw error;
         console.error(`[features-service] brand campaign revenue: channel ${slug} failed for brand ${brandId}:`, error);

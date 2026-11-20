@@ -3,45 +3,95 @@
  * through `loadPlayCatalogue`: the four tables are small, read together and shared 30 s in-process (the leg ladder
  * reads them on every campaign tick); every write clears that copy.
  */
-import { inArray, sql } from "drizzle-orm";
+import { inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { plays, strategies, tacticJudgingSweeps, tactics, workflowTacticVerdicts, writerTacticVerdicts } from "../db/schema.js";
 import { DeclarationError } from "./channel-declarations.js";
 import { buildPlayCatalogue, idOfName, TACTIC_SUBJECTS, type PlayCatalogue, type PlayRecord, type Strategy, type Tactic, type TacticJudgingSweep, type TacticSubject, type TacticVerdictRow, type WriterTacticVerdictRow } from "./plays.js";
 
 const SHARE_MS = 30_000;
-let shared: { at: number; value: Promise<PlayCatalogue> } | null = null;
+
+/**
+ * The shared copy, and the FINGERPRINT of the six tables it was built from (MON-PAGE-SPEED-FLOOR-1120).
+ *
+ * Why: the copy holds every stored Jev verdict (30k workflow rows, 23 MB, prod 2026-11-20), and rebuilding it
+ * (drizzle row mapping + `buildPlayCatalogue`) held the SERVING event loop 0.5-1 s each time. A sweep invalidated it
+ * on every verdict it wrote (1,407 in one sweep), so every reader in between rebuilt it: the dashboard's stored
+ * bodies waited behind it (campaign money 2-4 s, brand revenue 1.7 s, /health 0.5 s at load 30).
+ * Now: after 30 s a reader first asks Postgres for the tables' fingerprint (one aggregate, no rows cross the wire);
+ * an unchanged fingerprint keeps the copy, a moved one rebuilds it. A write of this process still drops the copy at
+ * once (`invalidatePlayCatalogue`), so its own next read sees it; a write of another process (or a sweep's verdict)
+ * is seen within 30 s, as before.
+ */
+interface SharedCatalogue {
+  checkedAt: number;
+  fingerprint: string | null;
+  value: Promise<PlayCatalogue>;
+}
+let shared: SharedCatalogue | null = null;
 
 export function invalidatePlayCatalogue(): void {
   shared = null;
 }
 
+/**
+ * One text that moves whenever any row of the six catalogue tables is inserted, updated or deleted: per table its row
+ * count and the sum of a 64-bit hash of each row. A verdict row hashes every column but its judged description (the
+ * bulk of the 23 MB): a new description is always written with a new `judged_at`, which is hashed. ~60 ms in Postgres.
+ */
+async function readCatalogueFingerprint(): Promise<string> {
+  const summed = (rowText: SQL, table: unknown) => sql`(select count(*)::text || ':' || coalesce(sum(hashtextextended(${rowText}, 0)), 0)::text from ${table} x)`;
+  const whole = sql.raw("x::text");
+  const verdictRow = sql.raw(
+    "concat_ws(',', x.workflow_slug, x.tactic_id, x.workflow_dynasty_slug, x.feature_slug, x.version, x.version_active, x.verdict, x.probability, x.model, x.judge_rule, x.judged_at)",
+  );
+  const writerRow = sql.raw("concat_ws(',', x.subject_kind, x.subject_key, x.tactic_id, x.subject_version, x.verdict, x.probability, x.model, x.judged_at)");
+  const rows = (await db.execute(
+    sql`select ${summed(whole, tactics)} || '|' || ${summed(whole, strategies)} || '|' || ${summed(whole, plays)} || '|' || ${summed(verdictRow, workflowTacticVerdicts)} || '|' || ${summed(whole, tacticJudgingSweeps)} || '|' || ${summed(writerRow, writerTacticVerdicts)} as fp`,
+  )) as unknown as Array<{ fp: string }>;
+  const fp = rows[0]?.fp;
+  if (typeof fp !== "string") throw new Error("[features-service] play catalogue fingerprint read returned no row");
+  return fp;
+}
+
 /** Tactics, strategies, plays and every stored verdict, as one catalogue. FAIL-LOUD (a failed read is never "no play"). */
 export function loadPlayCatalogue(): Promise<PlayCatalogue> {
-  if (shared && Date.now() - shared.at < SHARE_MS) return shared.value;
-  const value = (async () => {
-    const [t, s, p, v, w, wr] = await Promise.all([
-      db.select().from(tactics),
-      db.select().from(strategies),
-      db.select().from(plays),
-      db.select().from(workflowTacticVerdicts),
-      db.select().from(tacticJudgingSweeps),
-      db.select().from(writerTacticVerdicts),
-    ]);
-    return buildPlayCatalogue({
-      tactics: t.map(tacticOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
-      strategies: s.map(strategyOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
-      plays: p.map((r): PlayRecord => ({ pipeId: r.pipeId, strategyId: r.strategyId, isDefault: r.isDefault, ...(r.retiredAt ? { retired: true } : {}) })),
-      verdicts: v.map(verdictOf),
-      sweeps: w.map(sweepOf),
-      writerVerdicts: wr.map(writerVerdictOf),
-    });
+  const now = Date.now();
+  const prior = shared;
+  if (prior && now - prior.checkedAt < SHARE_MS) return prior.value;
+  const entry: SharedCatalogue = { checkedAt: now, fingerprint: null, value: Promise.resolve(null as never) };
+  entry.value = (async () => {
+    // Read BEFORE the rows: a write landing between the two leaves a fingerprint older than the rows, so the next
+    // check rebuilds once more (never the other way round: a copy older than its fingerprint).
+    const fingerprint = await readCatalogueFingerprint();
+    entry.fingerprint = fingerprint;
+    if (prior && prior.fingerprint === fingerprint) return prior.value;
+    return readPlayCatalogueTables();
   })();
-  shared = { at: Date.now(), value };
-  value.catch(() => {
-    if (shared?.value === value) shared = null;
+  shared = entry;
+  entry.value.catch(() => {
+    if (shared === entry) shared = null;
   });
-  return value;
+  return entry.value;
+}
+
+async function readPlayCatalogueTables(): Promise<PlayCatalogue> {
+  const [t, s, p, v, w, wr] = await Promise.all([
+    db.select().from(tactics),
+    db.select().from(strategies),
+    db.select().from(plays),
+    db.select().from(workflowTacticVerdicts),
+    db.select().from(tacticJudgingSweeps),
+    db.select().from(writerTacticVerdicts),
+  ]);
+  return buildPlayCatalogue({
+    tactics: t.map(tacticOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
+    strategies: s.map(strategyOf).sort((a, b) => (a.id < b.id ? -1 : 1)),
+    plays: p.map((r): PlayRecord => ({ pipeId: r.pipeId, strategyId: r.strategyId, isDefault: r.isDefault, ...(r.retiredAt ? { retired: true } : {}) })),
+    verdicts: v.map(verdictOf),
+    sweeps: w.map(sweepOf),
+    writerVerdicts: wr.map(writerVerdictOf),
+  });
 }
 
 const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
@@ -85,7 +135,8 @@ export async function insertWriterVerdict(row: Omit<WriterTacticVerdictRow, "jud
       set,
       setWhere: sql`${writerTacticVerdicts.judgedDescription} IS DISTINCT FROM ${row.judgedDescription} OR ${writerTacticVerdicts.subjectVersion} IS DISTINCT FROM ${row.subjectVersion}`,
     });
-  invalidatePlayCatalogue();
+  // No invalidation per verdict (MON-PAGE-SPEED-FLOOR-1120): only the sweep writes here, it drops the copy once at its
+  // end, and readers in between see each new verdict within 30 s through the catalogue fingerprint.
 }
 const strategyOf = (r: typeof strategies.$inferSelect): Strategy => ({
   id: r.id,
@@ -412,7 +463,7 @@ export async function insertVerdict(row: Omit<StoredVerdict, "judgedAt"> & { fea
       },
       setWhere: sql`${workflowTacticVerdicts.judgedDescription} IS DISTINCT FROM ${row.judgedDescription} OR ${workflowTacticVerdicts.judgeRule} IS DISTINCT FROM ${row.judgeRule}`,
     });
-  invalidatePlayCatalogue();
+  // No invalidation per verdict (MON-PAGE-SPEED-FLOOR-1120): see `insertWriterVerdict`.
 }
 
 /** Refresh which version of a judged workflow is active (a version is deprecated when its dynasty moves on). */
