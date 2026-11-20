@@ -602,6 +602,40 @@ describe("servedCached with the view refresher", () => {
     }
   });
 
+  it("a STALE answer the refresher cannot refresh is kept, never recomputed on the serving process (MON-PAGE-SPEED-FLOOR-1120)", async () => {
+    try {
+      refresherAnswer = { status: 502, body: { error: "Failed to compute brand revenue" } };
+      const key = buildScopeKey("b1", { orgId: "o" });
+      const tenMinutesOld = new Date(Date.now() - 10 * 60_000);
+      storedRow = { view: "brand-revenue", scopeKey: withResponseShape(key), orgId: "o", body: { pipeline: 7 }, computedAt: tenMinutesOld, refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ pipeline: 1 });
+      const body = await inRequest(() => servedCached({ view: "brand-revenue", scopeKey: key, orgId: "o", compute }));
+      expect(body).toEqual({ pipeline: 7 });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(fetchCalls).toHaveLength(1); // the refresher was asked
+      expect(compute).not.toHaveBeenCalled();
+      expect(storedRow?.body).toEqual({ pipeline: 7 });
+    } finally {
+      restore();
+    }
+  });
+
+  it("an answer older than 30 min the refresher cannot refresh is recomputed here, as before", async () => {
+    try {
+      refresherAnswer = { status: 502, body: { error: "Failed to compute brand revenue" } };
+      const key = buildScopeKey("b1", { orgId: "o" });
+      const hourOld = new Date(Date.now() - 60 * 60_000);
+      storedRow = { view: "brand-revenue", scopeKey: withResponseShape(key), orgId: "o", body: { pipeline: 7 }, computedAt: hourOld, refreshingAt: null };
+      const compute = vi.fn().mockResolvedValue({ pipeline: 1 });
+      expect(await inRequest(() => servedCached({ view: "brand-revenue", scopeKey: key, orgId: "o", compute }))).toEqual({ pipeline: 7 });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(compute).toHaveBeenCalledTimes(1);
+      expect(storedRow?.body).toEqual({ pipeline: 1 });
+    } finally {
+      restore();
+    }
+  });
+
   it("a refresher that is UNREACHABLE never has its compute run here: an error, never the serving process's heap (MIGRATE-1105 S6)", async () => {
     try {
       globalThis.fetch = (async () => { throw new TypeError("fetch failed"); }) as typeof fetch;
