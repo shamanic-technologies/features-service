@@ -285,6 +285,9 @@ export async function servedCachedWrappedJson<T>(args: CachedViewArgs<T>, envelo
 
 const MAX_WRAPPED_PER_BODY = 8;
 
+/** A stored answer this young is refreshed only by the refresher (see `behindCompute` in `serveCell`). */
+const LOCAL_FALLBACK_MIN_AGE_MS = 30 * 60_000;
+
 /**
  * A text DERIVED from a served body (a narrower form a query asks for, e.g. brand revenue
  * `?organizations=count`), built once per stored body and remembered beside it on a hot body, exactly
@@ -564,6 +567,20 @@ async function serveCell(
           if (inRequestWhileDown) throw new RefresherDownError(view);
           return { body: await localCompute(), persisted: false };
         };
+  // A refresh BEHIND a stored answer (stale hit, rotation) never falls back to computing on the serving event loop
+  // while the stored answer is younger than `LOCAL_FALLBACK_MIN_AGE_MS` (MON-PAGE-SPEED-FLOOR-1120): when the
+  // refresher answered an error or a body that is not the computed cell, the cell is kept and the next read retries.
+  // Before, every such answer recomputed the whole brand on the serving process (prod 2026-11-20: ~25 an hour on our
+  // own brand, revenue + campaign money, the serving loop 91 % busy, every stored answer waiting 1-10 s behind them).
+  const behindCompute = (storedAgeMs: number): (() => Promise<Computed>) =>
+    delegation && storedAgeMs < LOCAL_FALLBACK_MIN_AGE_MS
+      ? async () => {
+          const remote = await computeViaRefresher(delegation.url, delegation.headers);
+          if (remote === null) throw new RefresherDownError(view);
+          if (remote === undefined) throw new Error(`the refresher computed nothing for ${view}; the stored answer is kept, never recomputed on the serving process`);
+          return { body: bodyFromText(remote.json), persisted: true };
+        }
+      : compute;
   const ttl = ttlMs ?? defaultTtlFor(view, scopeKey);
   const maxStale = maxStaleMs ?? defaultMaxStaleMs();
 
@@ -626,7 +643,7 @@ async function serveCell(
     // Stale hit — serve immediately, refresh in the background (single-flight across replicas). The
     // background refresh first asks whether the brand's FACTS moved (lib/view-facts.ts) and skips the
     // whole-population compute when they did not.
-    void revalidate(view, scopeKey, orgId, compute, meta, { storedFingerprint: row.factsFingerprint ?? null, ageMs });
+    void revalidate(view, scopeKey, orgId, behindCompute(ageMs), meta, { storedFingerprint: row.factsFingerprint ?? null, ageMs });
     return servedBody();
   }
 
@@ -662,7 +679,7 @@ async function serveCell(
     }
     if (prior) {
       countRefresh(view, "rotation");
-      void computeAndPersistSingleFlight(view, scopeKey, orgId, compute, meta).catch((err) => {
+      void computeAndPersistSingleFlight(view, scopeKey, orgId, behindCompute(Date.now() - new Date(prior.computedAt).getTime()), meta).catch((err) => {
         console.error(`[features-service] view-cache rotation refresh failed (serving previous cell) view=${view}: ${(err as Error).message}`);
       });
       return bodyOfRow(prior);
