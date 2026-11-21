@@ -12,7 +12,8 @@
 import { fetchWithRetry } from "./fetch-retry.js";
 
 export interface OfferSteps {
-  offerId: string;
+  /** Null for a campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): no offer, so no step stated (`stated: false`). */
+  offerId: string | null;
   stated: boolean;
   /** Null exactly when `stated` is false. */
   steps: string[] | null;

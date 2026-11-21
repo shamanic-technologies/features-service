@@ -266,9 +266,10 @@
               "expected_model_computing",
               "no_priced_sales_path",
               "own_sales_path_unpriced",
+              "campaign_names_no_offer",
               null
             ],
-            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure)."
+            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure), or the funnel campaign names NO offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone; no offer = no value to price its Target on, never a default offer)."
           }
         },
         "required": [
@@ -21172,7 +21173,9 @@
                   "type": "string"
                 },
                 "offerId": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
                 },
                 "salesFunnelId": {
                   "type": "string",
@@ -21925,7 +21928,9 @@
                   "type": "string"
                 },
                 "offerId": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
                 },
                 "salesFunnelId": {
                   "type": "string",
@@ -22850,7 +22855,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "salesFunnelId": {
             "type": "string"
@@ -23373,7 +23380,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "requestedPipeCampaignId": {
             "type": "string",
@@ -23890,7 +23899,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "pricing": {
             "type": "string",
@@ -38288,7 +38299,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "salesFunnelId": {
             "type": "string"
@@ -79425,7 +79438,7 @@
     "/brands/{brandId}/campaign-targets": {
       "get": {
         "summary": "Today: one row per ongoing funnel campaign, on its Target: outcomes to date, $ per outcome, measured return, past per day, projection",
-        "description": "OUTCOME-RUNG-AND-TARGET-1106 (customer Today page, one row of cards per campaign Target). Per ONGOING funnel campaign of the brand: its Target (campaign-service, else the plan's, else its funnel's last step) with its Lifecycle rung; `outcomesToDate` = Target outcomes its own pipes made since inception (the pipe landing on the Target, dated; else the funnel count, undated, `pastUnavailableReason: target_not_dated_for_this_campaign`); `costPerOutcomeUsd` = everything the campaign spent (every unit, `?pricing=` default NET) ÷ that count; `measuredReturn` = count × the Target's value (the plan's catalogue value on the offer's lifetime revenue) ÷ spend, null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day (that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = when the expected outcomes summed from now reach one; null + `unavailableReason` otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), `budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
+        "description": "OUTCOME-RUNG-AND-TARGET-1106 (customer Today page, one row of cards per campaign Target). Per ONGOING funnel campaign of the brand: its Target (campaign-service, else the plan's, else its funnel's last step) with its Lifecycle rung; `outcomesToDate` = Target outcomes its own pipes made since inception (the pipe landing on the Target, dated; else the funnel count, undated, `pastUnavailableReason: target_not_dated_for_this_campaign`); `costPerOutcomeUsd` = everything the campaign spent (every unit, `?pricing=` default NET) ÷ that count; `measuredReturn` = count × the Target's value (the plan's catalogue value on the offer's lifetime revenue) ÷ spend, null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day (that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = when the expected outcomes summed from now reach one; null + `unavailableReason` otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), `budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed), `campaign_names_no_offer_caps_not_served_yet` (a campaign naming NO offer, DISTRY-CALL-IS-CAMPAIGN-1121: billing serves no offer-less caps read yet). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
         "tags": [
           "Sales funnel campaigns"
         ],
@@ -83957,6 +83970,15 @@
                       "type": "string",
                       "description": "Brief, Target, follows-its-plan and strategy changes are recorded from this UTC day only: before it, none is invented."
                     },
+                    "capChangesUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "campaign_names_no_offer_caps_not_served_yet",
+                        null
+                      ],
+                      "description": "Null = its budget changes (billing-service caps) were read. A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): billing-service does not serve an offer-less caps history yet, so no budget change is listed and none is invented."
+                    },
                     "rules": {
                       "type": "object",
                       "properties": {
@@ -84454,6 +84476,7 @@
                     "decisionsBuiltAt",
                     "silverComputedAt",
                     "settingsRecordedSince",
+                    "capChangesUnavailableReason",
                     "rules",
                     "kindsServed",
                     "total",

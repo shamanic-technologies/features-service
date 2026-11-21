@@ -985,7 +985,8 @@ export const factoryShadowPlans = pgTable("factory_shadow_plans", {
   campaignId: text("campaign_id").primaryKey(),
   orgId: text("org_id").notNull(),
   brandId: text("brand_id").notNull(),
-  offerId: text("offer_id").notNull(),
+  /** Null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121, migration 0081). */
+  offerId: text("offer_id"),
   /** `ok` | `judge_failed` | `plan_failed`. */
   status: text("status").notNull(),
   failure: text("failure"),

@@ -48,9 +48,9 @@ const expectedReturnRef = registry.register(
         .nullable()
         .describe("The EXPECTED cost per outcome of the scope's leg on that path (a campaign's own leg; an offer's, funnel's or brand's first platform leg). Always the model's figure, also beside a measured return. Null on a path whose legs carry no platform cost."),
       unavailableReason: z
-        .enum(["expected_model_unavailable", "expected_model_computing", "no_priced_sales_path", "own_sales_path_unpriced"])
+        .enum(["expected_model_unavailable", "expected_model_computing", "no_priced_sales_path", "own_sales_path_unpriced", "campaign_names_no_offer"])
         .nullable()
-        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure)."),
+        .describe("Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure), or the funnel campaign names NO offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone; no offer = no value to price its Target on, never a default offer)."),
     })
     .describe("THE EXPECTED RETURN (owner 2026-10-11: every ROI surface always reads a value, even expected, on a stated hypothesis). See roiMultiple."),
 );
@@ -3154,7 +3154,7 @@ const funnelUnavailableReasonSchema = z.enum(["sales_funnel_not_in_catalogue", "
 const salesFunnelCampaignRowSchema = z.object({
   id: z.string().describe("campaign-service's sales funnel campaign id."),
   brandId: z.string(),
-  offerId: z.string(),
+  offerId: z.string().nullable().describe("The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."),
   salesFunnelId: z.string().describe("The catalogue sales funnel id (`GET /internal/catalogue/sales-funnels` rows[].id)."),
   runningSalesFunnelId: z.string().describe("The catalogue sales funnel the campaign RUNS now (campaign-service `runningSalesFunnelId`, else `salesFunnelId`): `path` is this funnel's."),
   name: z.string().describe("The funnel campaign's name, as campaign-service serves it (`salesFunnelName`)."),
@@ -3430,7 +3430,7 @@ const salesFunnelCampaignActivityResponseRef = registry.register(
   z.object({
     salesFunnelCampaignId: z.string(),
     brandId: z.string(),
-    offerId: z.string(),
+    offerId: z.string().nullable().describe("The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."),
     salesFunnelId: z.string(),
     name: z.string(),
     createdAt: z.string(),
@@ -3525,7 +3525,7 @@ const campaignNextStepsResponseRef = registry.register(
     name: z.string().describe("The campaign's name: report the campaign by it."),
     status: z.string().describe("campaign-service's status: `ongoing` = running, `stopped` = paused."),
     brandId: z.string(),
-    offerId: z.string(),
+    offerId: z.string().nullable().describe("The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."),
     requestedPipeCampaignId: z.string().nullable().describe("Set when the id asked for was one pipe (unit campaign) of this campaign: the answer is the whole campaign's."),
     emailSendQueue: z
       .object({
@@ -3706,7 +3706,7 @@ const funnelCampaignSpendChartsResponseRef = registry.register(
   z.object({
     salesFunnelCampaignId: z.string(),
     brandId: z.string(),
-    offerId: z.string(),
+    offerId: z.string().nullable().describe("The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."),
     pricing: z.enum(["gross", "net"]),
     costBasis: z.literal("charged"),
     campaign: spendChartSchema.describe("The campaign as a whole (every pipe's spend)."),
@@ -9887,7 +9887,7 @@ const factoryShadowBody = registry.register(
     campaignId: z.string(),
     orgId: z.string(),
     brandId: z.string(),
-    offerId: z.string(),
+    offerId: z.string().nullable().describe("The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."),
     salesFunnelId: z.string(),
     salesFunnelName: z.string(),
     brief: z.string().nullable().describe("The brief the judge read (campaign-service's), null = none: every pipe on its default play."),
@@ -10287,7 +10287,7 @@ registry.registerPath({
     "else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = when the expected outcomes summed from now reach one; null + `unavailableReason` " +
     "otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains " +
     "in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), " +
-    "`budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
+    "`budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed), `campaign_names_no_offer_caps_not_served_yet` (a campaign naming NO offer, DISTRY-CALL-IS-CAMPAIGN-1121: billing serves no offer-less caps read yet). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, " +
     "plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), " +
     "counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, " +
     "LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The " +
@@ -10808,6 +10808,7 @@ registry.registerPath({
             decisionsBuiltAt: z.string().nullable().describe("When runs-service last built the script decisions read; null = the campaign has no unit campaign."),
             silverComputedAt: z.string().nullable().describe("The Silver sweep the steps and delays come from; null = none on today's rule (every change: no_downstream_step_measured)."),
             settingsRecordedSince: z.string().describe("Brief, Target, follows-its-plan and strategy changes are recorded from this UTC day only: before it, none is invented."),
+            capChangesUnavailableReason: z.enum(["campaign_names_no_offer_caps_not_served_yet"]).nullable().describe("Null = its budget changes (billing-service caps) were read. A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): billing-service does not serve an offer-less caps history yet, so no budget change is listed and none is invented."),
             rules: z
               .object({
                 minEngineDayDecisions: z.number(),

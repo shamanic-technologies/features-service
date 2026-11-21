@@ -49,7 +49,8 @@ export interface ShadowCampaign {
   id: string;
   orgId: string;
   brandId: string;
-  offerId: string;
+  /** Null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121): priced on no offer's terms, no offer steps. */
+  offerId: string | null;
   salesFunnelId: string;
   salesFunnelName: string;
   /** The catalogue step it targets; null = not stated yet (campaign-service: born as the funnel's last step). */
