@@ -71414,6 +71414,18 @@
                             ],
                             "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                           },
+                          "optIn": {
+                            "type": "boolean",
+                            "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                          },
+                          "decidedByFields": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
+                          },
                           "writersJudged": {
                             "type": "integer",
                             "nullable": true,
@@ -71501,6 +71513,8 @@
                           "description",
                           "clientLine",
                           "appliesTo",
+                          "optIn",
+                          "decidedByFields",
                           "writersJudged",
                           "writersFollowing",
                           "workflowsJudged",
@@ -71568,6 +71582,18 @@
                     ],
                     "description": "What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`."
                   },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "OUTREACH-3WAYS-1121: true = OPT-IN (script tactics only, else 400 `opt_in_script_only`): a script judged yes on it runs only for a campaign whose strategy REQUIRES it. Absent = false. Not a boolean = 400 `opt_in_invalid`."
+                  },
+                  "decidedByFields": {
+                    "type": "array",
+                    "nullable": true,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The script tactics fields it is about (e.g. `[\"serve\"]` for who a find script is handed): it applies only on Engines whose runnable scripts state one. Absent / null = every Engine. 400 `decided_by_fields_invalid`."
+                  },
                   "createdBy": {
                     "type": "string"
                   }
@@ -71621,6 +71647,18 @@
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
+                    },
                     "writersJudged": {
                       "type": "integer",
                       "nullable": true,
@@ -71708,6 +71746,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -71757,6 +71797,18 @@
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
+                    },
                     "writersJudged": {
                       "type": "integer",
                       "nullable": true,
@@ -71844,6 +71896,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -71933,6 +71987,18 @@
                         "script"
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -72084,6 +72150,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -72139,11 +72207,23 @@
                 "properties": {
                   "description": {
                     "type": "string",
-                    "description": "<= 500 characters; what the workflow DOES. Required unless clientLine is sent."
+                    "description": "<= 500 characters; what the workflow DOES. Required unless clientLine, optIn or decidedByFields is sent."
                   },
                   "clientLine": {
                     "type": "string",
                     "description": "<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."
+                  },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "OUTREACH-3WAYS-1121: make a SCRIPT tactic opt-in (true) or not (false); nothing is re-judged. 400 `opt_in_script_only` / `opt_in_invalid`."
+                  },
+                  "decidedByFields": {
+                    "type": "array",
+                    "nullable": true,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The script tactics fields it is about; null = every Engine. 400 `decided_by_fields_invalid`."
                   },
                   "appliesTo": {
                     "type": "string",
@@ -72206,6 +72286,18 @@
                         "script"
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -72309,6 +72401,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",

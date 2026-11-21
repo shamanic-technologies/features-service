@@ -121,7 +121,7 @@ import { invalidateChannelCatalogue, fleetLegPrice, fleetPlayPrices, readLegWork
 import type { PipeLegPrice } from "../lib/outcome-prices.js";
 import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
-import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription } from "../lib/plays-store.js";
+import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription, updateTacticGate } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
 import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
@@ -2041,6 +2041,10 @@ const tacticRowOf = (c: PlayCatalogue, t: Tactic) => {
     writersFollowing: appliesTo === "workflow" ? null : writers.filter((m) => m.get(t.id) === true).length,
     // The plain line a client reads on a message this tactic's workflows wrote (null = not shown to clients).
     clientLine: t.clientLine ?? null,
+    // OUTREACH-3WAYS-1121: a script judged yes on an opt-in tactic runs only where the campaign's strategy requires it.
+    optIn: t.optIn === true,
+    // The script tactics fields it is about (an Engine none of whose scripts states one is not narrowed by it).
+    decidedByFields: t.decidedByFields ?? null,
     // On each workflow's CURRENT version (the one a run executes).
     workflowsJudged: judged.length,
     workflowsFollowing: judged.filter((m) => m.get(t.id) === true).length,
@@ -2100,6 +2104,25 @@ router.get("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
   }
 });
 
+/** OUTREACH-3WAYS-1121: `optIn` (boolean) when sent, else undefined; anything else = 400 `opt_in_invalid`. */
+function optInOf(body: Body): boolean | undefined {
+  if (body.optIn === undefined) return undefined;
+  if (typeof body.optIn !== "boolean") throw new DeclarationError(400, "opt_in_invalid", "optIn must be true or false");
+  return body.optIn;
+}
+
+/** `decidedByFields`: a list of script tactics field names, null = every Engine; anything else = 400 `decided_by_fields_invalid`. */
+function decidedByFieldsOf(body: Body): string[] | null | undefined {
+  const v = body.decidedByFields;
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (!Array.isArray(v) || v.some((f) => typeof f !== "string" || !f.trim() || f.length > 60)) {
+    throw new DeclarationError(400, "decided_by_fields_invalid", "decidedByFields must be null or a list of script tactics field names (<= 60 characters each)");
+  }
+  const fields = [...new Set((v as string[]).map((f) => f.trim()))];
+  return fields.length ? fields : null;
+}
+
 router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
@@ -2107,7 +2130,9 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
     if (typeof appliesTo !== "string" || !(TACTIC_SUBJECTS as readonly string[]).includes(appliesTo)) {
       throw new DeclarationError(400, "applies_to_invalid", `appliesTo must be one of ${TACTIC_SUBJECTS.join(", ")}`);
     }
-    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body), clientLine: body.clientLine === undefined ? null : text(body, "clientLine", 80), appliesTo: appliesTo as TacticSubject });
+    const optIn = optInOf(body);
+    if (optIn && appliesTo !== "script") throw new DeclarationError(400, "opt_in_script_only", "only a script tactic can be opt-in (appliesTo: script)");
+    const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body), clientLine: body.clientLine === undefined ? null : text(body, "clientLine", 80), appliesTo: appliesTo as TacticSubject, optIn: optIn ?? false, decidedByFields: decidedByFieldsOf(body) ?? null });
     console.log(`[features-service] agent catalogue: ${t.appliesTo} tactic ${t.id} declared by ${t.createdBy}; Jev judges every ${t.appliesTo} on it`);
     void kickTacticJudgments();
     res.status(201).json(tacticRowOf(await loadPlayCatalogue(), t));
@@ -2124,6 +2149,19 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
 router.patch("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
   try {
+    // OUTREACH-3WAYS-1121: opt-in and the fields it is about. Nothing is re-judged; sent alone, only they move.
+    const optIn = optInOf(body);
+    const decidedByFields = decidedByFieldsOf(body);
+    if (optIn !== undefined || decidedByFields !== undefined) {
+      const gate = await updateTacticGate({ id: req.params.id, optIn, decidedByFields, updatedBy: actorOf(body, "updatedBy") });
+      if (gate.changed) {
+        console.log(`[features-service] agent catalogue: tactic ${gate.tactic.id} opt-in=${gate.tactic.optIn} decidedByFields=${JSON.stringify(gate.tactic.decidedByFields)} set by ${gate.tactic.updatedBy}`);
+        void refreshCatalogueMeasurementsAfterPlayWrite();
+      }
+      if (body.description === undefined && body.clientLine === undefined && body.appliesTo === undefined) {
+        return void res.json({ ...tacticRowOf(await loadPlayCatalogue(), gate.tactic), changed: gate.changed, previousDescription: gate.tactic.description, updatedBy: gate.tactic.updatedBy ?? null, updatedAt: gate.tactic.updatedAt ?? null });
+      }
+    }
     // The subject (RESEARCH-WF-FIGURES-1022): workflow | template | llm. With a description, both are edited.
     if (body.appliesTo !== undefined) {
       const appliesTo = body.appliesTo;
