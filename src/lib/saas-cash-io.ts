@@ -41,6 +41,8 @@ export function parseFleetCashByDay(body: unknown): FleetCashByDay {
     asOf: b.as_of,
     totalGrossCents: text(b.total_gross_cents, "total_gross_cents"),
     totalNetCents: text(b.total_net_cents, "total_net_cents"),
+    totalAgencyGrossCents: text(b.total_agency_gross_cents, "total_agency_gross_cents"),
+    totalAgencyNetCents: text(b.total_agency_net_cents, "total_agency_net_cents"),
     rows: rows.map((raw, i): OrgDayCash => {
       const r = raw as Record<string, unknown>;
       if (r.org_id !== null && typeof r.org_id !== "string") {
@@ -52,6 +54,8 @@ export function parseFleetCashByDay(body: unknown): FleetCashByDay {
         day: r.day,
         grossCents: text(r.gross_cents, `rows[${i}].gross_cents`),
         netCents: text(r.net_cents, `rows[${i}].net_cents`),
+        agencyGrossCents: text(r.agency_gross_cents, `rows[${i}].agency_gross_cents`),
+        agencyNetCents: text(r.agency_net_cents, `rows[${i}].agency_net_cents`),
       };
     }),
   };

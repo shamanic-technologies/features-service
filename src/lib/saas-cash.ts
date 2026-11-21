@@ -25,6 +25,12 @@ export interface OrgDayCash {
   grossCents: string;
   /** Net cash that day (gross minus refunds / lost disputes that happened that day), decimal text, cents. */
   netCents: string;
+  /**
+   * Agency money received that day OUTSIDE the product (billing: completed payment requests staff send by
+   * hand), never inside gross / net, decimal text, cents. Counts only in the with-agency series.
+   */
+  agencyGrossCents: string;
+  agencyNetCents: string;
 }
 
 export interface FleetCashByDay {
@@ -34,6 +40,9 @@ export interface FleetCashByDay {
   totalGrossCents: string;
   /** billing's fleet net cash since inception, decimal text, cents. */
   totalNetCents: string;
+  /** billing's agency money received outside the product since inception (gross / net), decimal text, cents. */
+  totalAgencyGrossCents: string;
+  totalAgencyNetCents: string;
   rows: OrgDayCash[];
 }
 
@@ -102,8 +111,15 @@ export interface SaasCashBody {
     thisWeek: SaasCashFigures;
     sinceInception: SaasCashFigures;
   };
-  /** Σ the four sides vs billing's fleet totals, since inception, gross and net. */
-  reconciliation: { gross: SideTotals; net: SideTotals };
+  /**
+   * Σ the four sides vs billing's fleet totals, since inception, gross and net; plus the agency money
+   * received outside the product (in no fleet total, only in the with-agency series) vs billing's total of it.
+   */
+  reconciliation: {
+    gross: SideTotals;
+    net: SideTotals;
+    agencyOutsideProduct: { grossCents: number; netCents: number; billingGrossCents: number; billingNetCents: number; differenceCents: number };
+  };
   /** Per agency / own org, its cash since inception (the orgs kept out of SaaS, and why). */
   excludedOrgs: Array<{
     orgId: string;
@@ -246,6 +262,7 @@ export function computeSaasCash(inputs: SaasCashInputs): SaasCashBody {
   const excluded = new Map<string, { gross: number; net: number }>();
   const withoutVerdict = new Set<string>();
   const payingSaas = new Set<string>();
+  const agencyOutside = { gross: 0, net: 0 };
   let firstPaymentDay: string | null = null;
 
   for (const row of cash.rows) {
@@ -262,14 +279,25 @@ export function computeSaasCash(inputs: SaasCashInputs): SaasCashBody {
     if (n > g) {
       throw new Error(`[features-service] saas-cash: billing served net ${row.netCents} above gross ${row.grossCents} for ${who} on ${row.day}`);
     }
-    if (g === 0 && n === 0) continue;
+    const ag = wholeCentsOf(row.agencyGrossCents, `agency gross cash of ${who} on ${row.day}`);
+    const an = wholeCentsOf(row.agencyNetCents, `agency net cash of ${who} on ${row.day}`);
+    if (ag < 0) throw new Error(`[features-service] saas-cash: billing served negative agency gross for ${who} on ${row.day}: ${row.agencyGrossCents}`);
+    if (an > ag) {
+      throw new Error(`[features-service] saas-cash: billing served agency net ${row.agencyNetCents} above agency gross ${row.agencyGrossCents} for ${who} on ${row.day}`);
+    }
+    if (g === 0 && n === 0 && ag === 0 && an === 0) continue;
     if (firstPaymentDay === null || row.day < firstPaymentDay) firstPaymentDay = row.day;
-    const side = sideOf(row.orgId, agencyOrgIds, verdicts);
     let acc = byDay.get(row.day);
     if (!acc) {
       acc = emptyAcc();
       byDay.set(row.day, acc);
     }
+    // Agency money received outside the product: whoever the row names, only the with-agency series.
+    agencyOutside.gross += ag;
+    agencyOutside.net += an;
+    acc.agencyGross += ag;
+    if (g === 0 && n === 0) continue;
+    const side = sideOf(row.orgId, agencyOrgIds, verdicts);
     if (side === "saas") {
       gross.saas += g;
       net.saas += n;
@@ -323,7 +351,7 @@ export function computeSaasCash(inputs: SaasCashInputs): SaasCashBody {
   }
 
   const thisWeek = weekAcc.get(isoWeekStart(today)) ?? emptyAcc();
-  const sinceInception: Acc = { saasGross: gross.saas, saasNet: net.saas, agencyGross: gross.agency };
+  const sinceInception: Acc = { saasGross: gross.saas, saasNet: net.saas, agencyGross: gross.agency + agencyOutside.gross };
 
   return {
     computedAt: now.toISOString(),
@@ -333,7 +361,8 @@ export function computeSaasCash(inputs: SaasCashInputs): SaasCashBody {
         "Gross cash collected: payments received on the UTC day they landed, before refunds and lost disputes, every acquirer plus off-platform payments (billing-service). Never consumed spend.",
       net: "Net cash collected: gross minus the refunds and lost disputes that happened that UTC day.",
       saas: "SaaS = every paying org that is neither an agency org (one carrying a stated monthly amount, the rule of the MRR split) nor one of our own orgs (billing's own-org verdict).",
-      withAgency: "With agency = SaaS plus agency orgs, gross. Our own orgs and money billing attributes to no org stay out; their totals are in reconciliation.",
+      withAgency:
+        "With agency = SaaS gross + agency orgs' gross + agency money received outside the product (payment requests staff send by hand, billing). Our own orgs and SaaS money billing attributes to no org stay out; their totals are in reconciliation.",
       excluded: "Our own orgs (platform, staff, test) and money billing attributes to no org are in no series; agency orgs only in the with-agency series.",
       periods: "Weeks are ISO weeks (Monday 00:00 UTC); days are UTC. Both run from the first payment ever; the current week and today are partial (isCurrent).",
     },
@@ -344,6 +373,16 @@ export function computeSaasCash(inputs: SaasCashInputs): SaasCashBody {
     reconciliation: {
       gross: sideTotals(gross, wholeCentsOf(cash.totalGrossCents, "billing fleet gross total")),
       net: sideTotals(net, wholeCentsOf(cash.totalNetCents, "billing fleet net total")),
+      agencyOutsideProduct: (() => {
+        const billingGross = wholeCentsOf(cash.totalAgencyGrossCents, "billing agency gross total");
+        return {
+          grossCents: agencyOutside.gross,
+          netCents: agencyOutside.net,
+          billingGrossCents: billingGross,
+          billingNetCents: wholeCentsOf(cash.totalAgencyNetCents, "billing agency net total"),
+          differenceCents: billingGross - agencyOutside.gross,
+        };
+      })(),
     },
     excludedOrgs: [...excluded.entries()]
       .map(([orgId, e]) => {
