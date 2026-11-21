@@ -166,3 +166,13 @@ describe("Jev reads the WHOLE workflow, in parts when it is too long (2026-10-14
     expect(state.inserted.map((x) => [x.workflowSlug, x.judgeRule])).toEqual([["torcular-v4", JUDGE_RULE]]);
   });
 });
+
+describe("the script question (OUTREACH-3WAYS-1121)", () => {
+  it("tells Jev to judge only the branch the script's own tactics select in a code several scripts share", async () => {
+    const { writerTacticQuestion } = await import("./tactic-judgments.js");
+    const q = writerTacticQuestion({ name: "Names a person in its first email", description: "Proposes one person to meet." }, "script");
+    expect(q.instructions).toContain("judge only the branch THIS script's own tactics select");
+    // Templates and LLMs are untouched.
+    expect(writerTacticQuestion({ name: "x", description: "y" }, "template").instructions).not.toContain("branch");
+  });
+});
