@@ -374,6 +374,8 @@ export interface CatalogueStep {
   subjectKind: OutcomeSubjectKind | null;
   /** The lead STATE reaching the step puts the lead in (`lib/lead-states.ts`, LEAD-STATES-1024); null = none. */
   leadState: LeadStateKey | null;
+  /** The step a DECLARED step states it leads to (`toward_step`: Email queued -> Email sent); null = none stated (every coded step). */
+  towardStep: string | null;
 }
 
 export interface CataloguePipe {
@@ -941,13 +943,14 @@ export function buildCatalogueModel(inputs: CatalogueInputs): CatalogueModel {
       lifecycleRung: inputs.outcomeRungs?.get(key) ?? null,
       subjectKind: d ? (isOutcomeSubjectKind(d.subjectKind) ? d.subjectKind : null) : codedStepSubjectKindOf(key),
       leadState: leadStateOf(key),
+      towardStep: d?.towardStep ?? null,
     });
   }
   // The lead states no coded step names (Lead interested, Lead visited): outcomes of the cost ledger, reached once per
   // lead, never a pipe's leg (LEAD-STATES-1024). A step of the same key declared at run time wins.
   for (const s of NEW_LEAD_STATE_STEPS) {
     if (steps.has(s.key)) continue;
-    steps.set(s.key, { key: s.key, label: s.label, description: s.description, shortDescription: s.shortDescription, icon: s.icon, declared: false, valueUsd: null, valueVia: null, producedBy: "lead-service", lifecycleRung: inputs.outcomeRungs?.get(s.key) ?? null, subjectKind: "person", leadState: s.key });
+    steps.set(s.key, { key: s.key, label: s.label, description: s.description, shortDescription: s.shortDescription, icon: s.icon, declared: false, valueUsd: null, valueVia: null, producedBy: "lead-service", lifecycleRung: inputs.outcomeRungs?.get(s.key) ?? null, subjectKind: "person", leadState: s.key, towardStep: null });
   }
 
   const pipes = buildPipes(inputs, (s) => stepValue(s).value);

@@ -8898,7 +8898,7 @@ registry.registerPath({
             object: z.literal("step"),
             total: z.number().int(),
             lifecycleLadder: catalogueLifecycleLadder,
-            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads', 'Positive replies')."), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...)."), ...catalogueLifecycleFields })),
+            rows: z.array(z.object({ key: z.string().describe("Canonical step key (`lead_found`, `conversation`, ...)."), name: z.string(), pluralName: z.string().describe("The name's plural for counts ('Leads', 'Positive replies')."), icon: z.string().describe("Phosphor icon name (`chat-circle-text`, ...)."), ...catalogueLifecycleFields, towardStep: z.string().nullable().describe("The step this one leads to, as its declaration states it (`email_queued` -> `email_sent`, `message_queued` -> `message_sent`); null when none is stated (every coded step). Read by billing-service to count a queue decision as the contact it leads to (OUTREACH-3WAYS-1121).") })),
           }),
         },
       },
