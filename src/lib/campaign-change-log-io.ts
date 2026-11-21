@@ -89,8 +89,19 @@ export async function readCampaignChangeHistory(row: SalesFunnelCampaignRow, h: 
   return parseChangeHistory(await res.json());
 }
 
+/**
+ * A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): billing-service keys its caps on the offer today, and its
+ * offer-less caps routes are not served yet. Its cap changes are then "not available yet", stated, never asked at an
+ * `/offers/null/...` path and never invented.
+ */
+export const CAP_CHANGES_NO_OFFER_REASON = "campaign_names_no_offer_caps_not_served_yet" as const;
+
 /** billing-service: every change of the caps this funnel campaign is held to. FAIL-LOUD. */
-export async function readCampaignCapChanges(row: SalesFunnelCampaignRow, h: OwnerHeaders): Promise<CapChangeRecord[]> {
+export async function readCampaignCapChanges(
+  row: SalesFunnelCampaignRow,
+  h: OwnerHeaders,
+): Promise<{ changes: CapChangeRecord[]; unavailableReason: typeof CAP_CHANGES_NO_OFFER_REASON | null }> {
+  if (row.offerId === null) return { changes: [], unavailableReason: CAP_CHANGES_NO_OFFER_REASON };
   const url = process.env.BILLING_SERVICE_URL;
   const apiKey = process.env.BILLING_SERVICE_API_KEY;
   if (!url || !apiKey) throw new Error("[features-service] BILLING_SERVICE_URL or BILLING_SERVICE_API_KEY not configured");
@@ -99,5 +110,5 @@ export async function readCampaignCapChanges(row: SalesFunnelCampaignRow, h: Own
   if (!res.ok) throw new Error(`[features-service] billing-service cap-changes ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const body = (await res.json()) as unknown;
   if (!isRecord(body) || !Array.isArray(body.changes)) throw new Error("[features-service] campaign changes: billing-service cap-changes served no changes");
-  return body.changes as CapChangeRecord[];
+  return { changes: body.changes as CapChangeRecord[], unavailableReason: null };
 }

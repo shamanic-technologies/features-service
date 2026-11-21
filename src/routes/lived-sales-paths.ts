@@ -60,7 +60,7 @@ export async function computeLivedSalesPaths(
   ]);
 
   const funnelOfCampaign = new Map<string, FunnelCampaignRef>();
-  const offerOfCampaign = new Map<string, string>();
+  const offerOfCampaign = new Map<string, string | null>();
   for (const fc of funnelCampaigns) {
     for (const u of fc.units) {
       funnelOfCampaign.set(u.campaignId, { funnelCampaignId: fc.id, salesFunnelId: fc.salesFunnelId, salesFunnelName: fc.salesFunnelName ?? null });

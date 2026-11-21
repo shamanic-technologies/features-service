@@ -6,14 +6,19 @@
  * dynasty is kept when every REQUIRED tactic is judged yes on it and every EXCLUDED one judged no. Verdicts are Jev's,
  * judged on each runnable version (its description, its tactics data and its code; `lib/tactic-judgments.ts`), stored
  * in `writer_tactic_verdicts` (subject kind `script`, key `<outcome>/<dynasty>`), the previous version's verdict serving
- * until the new one is judged. A script NOT judged on a named tactic is never kept. A tactic about a matter the Engine's
+ * until the new one is judged. A script NOT judged on a named tactic is never kept. An OPT-IN tactic (`Tactic.optIn`,
+ * OUTREACH-3WAYS-1121) works the other way round: a script judged yes on it is kept ONLY where the strategy requires it
+ * (`optInRefusal`), never under no strategy nor a strategy silent on it. A tactic about a matter the Engine's
  * scripts do not decide (`strategyOnEngine`, ONE-WRITER-N-MODELS-1116-LEADS-ONLY) narrows nothing on that Engine. No strategy (or one naming no script
  * tactic) keeps every script of the Engine. A play the campaign's pipe does not catalogue keeps none (never a silent
  * widen). No order is served: workflow-service's Rating picks among the kept dynasties.
  */
-import { excludedDynasties, strategyOnEngine, strategyOnSubject, strategyVerdict, tacticNameOf, workflowStrategyOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
+import { excludedDynasties, optInRefusal, optInTacticsOnEngine, strategyOnEngine, strategyOnSubject, strategyVerdict, tacticNameOf, workflowStrategyOf, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
 import { scriptDynastyKey, scriptWorksPipe, type RunnableScript } from "./script-catalogue-client.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
+
+/** PURE: the tactic ids a strategy REQUIRES (what a campaign ASKS for, OUTREACH-3WAYS-1121); none without one. */
+const askedOf = (strategy: Strategy | null): Set<string> => new Set(strategy?.requiresTacticIds ?? []);
 
 export interface ScriptKept {
   dynasty: string;
@@ -43,6 +48,13 @@ export function scriptsKeptByStrategy(scripts: readonly RunnableScript[], strate
     if (!onEngine.has(outcome)) onEngine.set(outcome, strategyOnEngine(strategy, scripts.filter((x) => x.outcome === outcome), c.tactics));
     return onEngine.get(outcome)!;
   };
+  // OUTREACH-3WAYS-1121: the opt-in tactics gating each Engine (empty while no tactic is opt-in: byte-identical).
+  const optInsByEngine = new Map<string, ReturnType<typeof optInTacticsOnEngine>>();
+  const optInsOf = (outcome: string) => {
+    if (!optInsByEngine.has(outcome)) optInsByEngine.set(outcome, optInTacticsOnEngine(scripts.filter((x) => x.outcome === outcome), c.tactics));
+    return optInsByEngine.get(outcome)!;
+  };
+  const asked = askedOf(strategy);
   for (const s of scripts) stOf(s.outcome);
   const scriptTacticIds = [...new Set([...onEngine.values()].flatMap((st) => [...st.requiresTacticIds, ...st.excludesTacticIds]))];
   const nameOf = tacticNameOf(c as PlayCatalogue);
@@ -51,6 +63,8 @@ export function scriptsKeptByStrategy(scripts: readonly RunnableScript[], strate
     .map((s) => {
       const base = { dynasty: s.dynasty, scriptId: s.id, version: s.version };
       if (playUnknown) return { ...base, kept: false, reason: `the play "${playUnknown}" is not catalogued on this campaign's pipe` };
+      const optOut = optInRefusal(optInsOf(s.outcome), asked, c.tacticsByWriter.get(writerSubjectKey("script", scriptDynastyKey(s))));
+      if (optOut) return { ...base, kept: false, reason: optOut };
       const st = stOf(s.outcome);
       if (!st || st.requiresTacticIds.length + st.excludesTacticIds.length === 0) return { ...base, kept: true, reason: null };
       const v = strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("script", scriptDynastyKey(s))), nameOf, "script");
@@ -102,12 +116,22 @@ export function excludedPipeCandidates(
 ): Set<string> {
   const all = [...keys];
   const out = new Set<string>();
-  if (!strategy) return out;
   const nameOf = tacticNameOf(c as PlayCatalogue);
   const workflows = all.filter((k) => !k.includes("/"));
-  for (const k of excludedDynasties(workflowStrategyOf(c, strategy), workflows, c.tacticsByDynasty, nameOf).keys()) out.add(k);
+  if (strategy) for (const k of excludedDynasties(workflowStrategyOf(c, strategy), workflows, c.tacticsByDynasty, nameOf).keys()) out.add(k);
+  const asked = askedOf(strategy);
   for (const k of all.filter((x) => x.includes("/"))) {
     const outcome = k.slice(0, k.indexOf("/"));
+    // OUTREACH-3WAYS-1121: an opt-in script is priced only on a play whose strategy asks for it (no strategy included).
+    // Runnable scripts unread = every opt-in script tactic applies (as strict as the rest of this read).
+    const optIns = runnable
+      ? optInTacticsOnEngine(runnable.filter((x) => x.outcome === outcome), c.tactics)
+      : optInTacticsOnEngine([], new Map([...c.tactics].map(([id, t]) => [id, { ...t, decidedByFields: null }])));
+    if (optInRefusal(optIns, asked, c.tacticsByWriter.get(writerSubjectKey("script", k)))) {
+      out.add(k);
+      continue;
+    }
+    if (!strategy) continue;
     const st = runnable ? strategyOnEngine(strategy, runnable.filter((x) => x.outcome === outcome), c.tactics) : strategyOnSubject(strategy, "script", c.tactics);
     if (st.requiresTacticIds.length + st.excludesTacticIds.length === 0) continue;
     if (!strategyVerdict(st, c.tacticsByWriter.get(writerSubjectKey("script", k)), nameOf, "script").allowed) out.add(k);

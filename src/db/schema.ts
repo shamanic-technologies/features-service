@@ -643,6 +643,11 @@ export const tactics = pgTable("tactics", {
    * (the matter is that Engine's decision). Null = applies on every Engine.
    */
   decidedByFields: text("decided_by_fields").array(),
+  /**
+   * OPT-IN (migration 0082, OUTREACH-3WAYS-1121): a script judged yes on it is kept only where the campaign's strategy
+   * REQUIRES this tactic (`optInRefusal`, lib/plays.ts). Script tactics only.
+   */
+  optIn: boolean("opt_in").notNull().default(false),
 });
 
 export const strategies = pgTable("strategies", {
@@ -985,7 +990,8 @@ export const factoryShadowPlans = pgTable("factory_shadow_plans", {
   campaignId: text("campaign_id").primaryKey(),
   orgId: text("org_id").notNull(),
   brandId: text("brand_id").notNull(),
-  offerId: text("offer_id").notNull(),
+  /** Null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121, migration 0081). */
+  offerId: text("offer_id"),
   /** `ok` | `judge_failed` | `plan_failed`. */
   status: text("status").notNull(),
   failure: text("failure"),

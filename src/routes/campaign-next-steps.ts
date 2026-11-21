@@ -37,7 +37,7 @@ export interface CampaignNextStepsBody {
   name: string;
   status: string;
   brandId: string;
-  offerId: string;
+  offerId: string | null;
   /** Set when the id asked for was one pipe (unit campaign) of this campaign. */
   requestedPipeCampaignId: string | null;
   emailSendQueue: EmailSendQueue | null;

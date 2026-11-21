@@ -72,7 +72,8 @@ export async function computeCampaignChanges(row: SalesFunnelCampaignRow, header
   const now = new Date();
   const owner = { orgId: headers.orgId, userId: headers.userId, runId: headers.runId };
   // The owners' journals first: the units it EVER had (a replaced unit's decisions are its history too).
-  const [history, caps] = await Promise.all([readCampaignChangeHistory(row, owner), readCampaignCapChanges(row, owner)]);
+  const [history, capRead] = await Promise.all([readCampaignChangeHistory(row, owner), readCampaignCapChanges(row, owner)]);
+  const caps = capRead.changes;
   const unitIds = [...new Set([...history.units.map((u) => u.campaignId), ...row.units.map((u) => u.campaignId)])];
   const since = addDays(row.createdAt.slice(0, 10), -READ_BEFORE_BIRTH_DAYS);
   const [reach, scripts, labels, transitions, strategies, plays] = await Promise.all([
@@ -103,6 +104,8 @@ export async function computeCampaignChanges(row: SalesFunnelCampaignRow, header
     silverComputedAt,
     /** Brief, Target, follows-its-plan and strategy changes are recorded from this day only (none invented before). */
     settingsRecordedSince: history.settingsRecordedSince,
+    /** Null = its cap changes were read. A campaign naming no offer: its caps' history is not served yet (named). */
+    capChangesUnavailableReason: capRead.unavailableReason,
     rules: CHANGE_LOG_RULES,
     kindsServed: CHANGE_KINDS,
     total: changes.length,

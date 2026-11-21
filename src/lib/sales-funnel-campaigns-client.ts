@@ -24,7 +24,9 @@ export interface SalesFunnelUnitRow {
 export interface SalesFunnelCampaignRow {
   id: string;
   brandId: string;
-  offerId: string;
+  /** DISTRY-CALL-IS-CAMPAIGN-1121 (campaign-service): a campaign launched on its Target alone may name NO offer
+   *  (a campaign = Target + start + budget + brief; the offer is not part of it). Null = no offer, never a default one. */
+  offerId: string | null;
   salesFunnelId: string;
   salesFunnelName: string;
   status: string;

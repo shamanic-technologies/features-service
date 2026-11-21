@@ -73,7 +73,9 @@ export type ExpectedReturnUnavailableReason =
   /** No path of the model could be priced. */
   | "no_priced_sales_path"
   /** A funnel campaign's OWN path cannot be priced (a leg with no rate or no platform cost, e.g. a leads-only funnel). */
-  | "own_sales_path_unpriced";
+  | "own_sales_path_unpriced"
+  /** A funnel campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): no offer, so no value to price its Target on. */
+  | "campaign_names_no_offer";
 
 export interface ExpectedCostPerOutcome {
   costPerOutcomeUsd: number;
@@ -865,11 +867,14 @@ export function expectedReturnForOffer(identity: ExpectedIdentity, brandId: stri
 export function expectedReturnForFunnelCampaign(
   identity: ExpectedIdentity,
   brandId: string,
-  offerId: string,
+  offerId: string | null,
   salesFunnelId: string,
   measured: MeasuredReturnPair | null | undefined,
   coldWaitMs: number = TABLE_COLD_WAIT_MS,
 ): Promise<ExpectedReturn> {
+  // A campaign naming no offer (DISTRY-CALL-IS-CAMPAIGN-1121): a return values its Target at an offer's lifetime revenue,
+  // and it has none. Stated, never another offer's figure nor the brand's (owner: no default offer invented).
+  if (offerId === null) return Promise.resolve(withMeasuredReturn(unavailableExpectedReturn("campaign_names_no_offer"), measured));
   return soft(`funnel campaign ${salesFunnelId}`, measured, async () => {
     const m = await modelOrThrow(identity, brandId, offerId, coldWaitMs);
     const own = expectedForCombination(m, salesFunnelId);

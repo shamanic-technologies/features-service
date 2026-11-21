@@ -266,9 +266,10 @@
               "expected_model_computing",
               "no_priced_sales_path",
               "own_sales_path_unpriced",
+              "campaign_names_no_offer",
               null
             ],
-            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, or a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure)."
+            "description": "Why roiMultiple is null: the model could not be read (logged), is computing for the first time since a deploy (served on the next read), no path could be priced, a funnel campaign's OWN path cannot be priced by the offer's sales paths NOR by the catalogue (a step after Paid client that has no value, a leg with no rate, a pipe nothing prices: never another funnel's figure), or the funnel campaign names NO offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone; no offer = no value to price its Target on, never a default offer)."
           }
         },
         "required": [
@@ -21172,7 +21173,9 @@
                   "type": "string"
                 },
                 "offerId": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
                 },
                 "salesFunnelId": {
                   "type": "string",
@@ -21925,7 +21928,9 @@
                   "type": "string"
                 },
                 "offerId": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true,
+                  "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
                 },
                 "salesFunnelId": {
                   "type": "string",
@@ -22850,7 +22855,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "salesFunnelId": {
             "type": "string"
@@ -23373,7 +23380,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "requestedPipeCampaignId": {
             "type": "string",
@@ -23890,7 +23899,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "pricing": {
             "type": "string",
@@ -38288,7 +38299,9 @@
             "type": "string"
           },
           "offerId": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "description": "The campaign's offer; null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121: a campaign launched on its Target alone, offer optional; never a placeholder offer)."
           },
           "salesFunnelId": {
             "type": "string"
@@ -71401,6 +71414,18 @@
                             ],
                             "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                           },
+                          "optIn": {
+                            "type": "boolean",
+                            "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                          },
+                          "decidedByFields": {
+                            "type": "array",
+                            "nullable": true,
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
+                          },
                           "writersJudged": {
                             "type": "integer",
                             "nullable": true,
@@ -71488,6 +71513,8 @@
                           "description",
                           "clientLine",
                           "appliesTo",
+                          "optIn",
+                          "decidedByFields",
                           "writersJudged",
                           "writersFollowing",
                           "workflowsJudged",
@@ -71555,6 +71582,18 @@
                     ],
                     "description": "What it tags (BEST-TPL-LLM-1022); absent = `workflow`. Anything else = 400 `applies_to_invalid`."
                   },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "OUTREACH-3WAYS-1121: true = OPT-IN (script tactics only, else 400 `opt_in_script_only`): a script judged yes on it runs only for a campaign whose strategy REQUIRES it. Absent = false. Not a boolean = 400 `opt_in_invalid`."
+                  },
+                  "decidedByFields": {
+                    "type": "array",
+                    "nullable": true,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The script tactics fields it is about (e.g. `[\"serve\"]` for who a find script is handed): it applies only on Engines whose runnable scripts state one. Absent / null = every Engine. 400 `decided_by_fields_invalid`."
+                  },
                   "createdBy": {
                     "type": "string"
                   }
@@ -71608,6 +71647,18 @@
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
+                    },
                     "writersJudged": {
                       "type": "integer",
                       "nullable": true,
@@ -71695,6 +71746,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -71744,6 +71797,18 @@
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
                     },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
+                    },
                     "writersJudged": {
                       "type": "integer",
                       "nullable": true,
@@ -71831,6 +71896,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -71920,6 +71987,18 @@
                         "script"
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -72071,6 +72150,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -72126,11 +72207,23 @@
                 "properties": {
                   "description": {
                     "type": "string",
-                    "description": "<= 500 characters; what the workflow DOES. Required unless clientLine is sent."
+                    "description": "<= 500 characters; what the workflow DOES. Required unless clientLine, optIn or decidedByFields is sent."
                   },
                   "clientLine": {
                     "type": "string",
                     "description": "<= 80 characters: the plain line a client reads (WRITTEN-BY-1019). Client copy only: nothing is re-judged. Sent alone, only the line moves (`changed` says whether it did)."
+                  },
+                  "optIn": {
+                    "type": "boolean",
+                    "description": "OUTREACH-3WAYS-1121: make a SCRIPT tactic opt-in (true) or not (false); nothing is re-judged. 400 `opt_in_script_only` / `opt_in_invalid`."
+                  },
+                  "decidedByFields": {
+                    "type": "array",
+                    "nullable": true,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The script tactics fields it is about; null = every Engine. 400 `decided_by_fields_invalid`."
                   },
                   "appliesTo": {
                     "type": "string",
@@ -72193,6 +72286,18 @@
                         "script"
                       ],
                       "description": "What the tactic tags (BEST-TPL-LLM-1022): `workflow` (a workflow VERSION, judged on its DAG), `template` (a content-generation template DYNASTY, judged on its head's text) or `llm` (an LLM DYNASTY of chat-service, judged on its head model: LLM-DYNASTY-1022-FS) or `script` (a stored Script DYNASTY of an Engine, judged on its runnable version: description, tactics data and code; MIGRATE-1105 S0-STRATEGY). A strategy names tactics of any subject; each choice (workflow, template, LLM) reads only the tactics of its own subject."
+                    },
+                    "optIn": {
+                      "type": "boolean",
+                      "description": "OUTREACH-3WAYS-1121: an OPT-IN script tactic. A script judged yes on it (it serves people who are not the offer's buyers: the brand's investors, its industry peers) is kept ONLY for a campaign whose strategy REQUIRES this tactic; under no strategy, no brief or a strategy silent on it, it is ruled out (`GET /internal/script-strategy` names why). False on every other tactic."
+                    },
+                    "decidedByFields": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The script tactics fields this tactic is about (ONE-WRITER-N-MODELS-1116-LEADS-ONLY): it narrows (and, opt-in, gates) an Engine only where one of its runnable scripts states one of them. Null = every Engine."
                     },
                     "writersJudged": {
                       "type": "integer",
@@ -72296,6 +72401,8 @@
                     "description",
                     "clientLine",
                     "appliesTo",
+                    "optIn",
+                    "decidedByFields",
                     "writersJudged",
                     "writersFollowing",
                     "workflowsJudged",
@@ -79425,7 +79532,7 @@
     "/brands/{brandId}/campaign-targets": {
       "get": {
         "summary": "Today: one row per ongoing funnel campaign, on its Target: outcomes to date, $ per outcome, measured return, past per day, projection",
-        "description": "OUTCOME-RUNG-AND-TARGET-1106 (customer Today page, one row of cards per campaign Target). Per ONGOING funnel campaign of the brand: its Target (campaign-service, else the plan's, else its funnel's last step) with its Lifecycle rung; `outcomesToDate` = Target outcomes its own pipes made since inception (the pipe landing on the Target, dated; else the funnel count, undated, `pastUnavailableReason: target_not_dated_for_this_campaign`); `costPerOutcomeUsd` = everything the campaign spent (every unit, `?pricing=` default NET) ÷ that count; `measuredReturn` = count × the Target's value (the plan's catalogue value on the offer's lifetime revenue) ÷ spend, null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day (that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = when the expected outcomes summed from now reach one; null + `unavailableReason` otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), `budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
+        "description": "OUTCOME-RUNG-AND-TARGET-1106 (customer Today page, one row of cards per campaign Target). Per ONGOING funnel campaign of the brand: its Target (campaign-service, else the plan's, else its funnel's last step) with its Lifecycle rung; `outcomesToDate` = Target outcomes its own pipes made since inception (the pipe landing on the Target, dated; else the funnel count, undated, `pastUnavailableReason: target_not_dated_for_this_campaign`); `costPerOutcomeUsd` = everything the campaign spent (every unit, `?pricing=` default NET) ÷ that count; `measuredReturn` = count × the Target's value (the plan's catalogue value on the offer's lifetime revenue) ÷ spend, null + reason when not meaningful (`target_has_no_value` after Paid client, `nothing_spent_yet`, `plan_not_computed_yet`); `past[]` = one point per UTC day (that day's outcomes + cumulative; the last cumulative IS `outcomesToDate`). The PAST is measured and never moves with the Plan. `projection` alone reads the current Plan: the stored plan line's expected cost per Target (`planComputedAt`, `planFunnelId` say which computation) × what the campaign spends per day (its daily budget, else its last 7 days' spend pace) = `outcomesPerDay`, `daily[]` the next 30 UTC days, `nextExpectedAt` = when the expected outcomes summed from now reach one; null + `unavailableReason` otherwise. PROJECTION-CAP-1117: the projection reads the campaign's real capacity to spend (billing's measured caps): a cap spends at most what remains in its window, then nothing until the window resets (`pausedReason` + `resumesAt`), then the full pace; `unavailableReason` `campaign_stopped` (not ongoing), `budget_cap_spent_no_reset` / `volume_cap_reached_no_reset` (a one-off cap reached), `budget_consumption_unreadable`, `spend_capacity_unreadable` (caps read failed), `campaign_names_no_offer_caps_not_served_yet` (a campaign naming NO offer, DISTRY-CALL-IS-CAMPAIGN-1121: billing serves no offer-less caps read yet). `milestones[]` (campaign page, owner « le QUOI c'est l'outcome, aussi fin que possible »): the same card for EVERY milestone from Start to the Target, plus every outcome its units PRODUCED on the way, its Lifecycle rung strictly between two milestones' (MILESTONES-CONTACTED-1117, `producedOnTheWay`), counted from the Units the campaign's runs PRODUCED (runs-service ledger, per UTC day: any outcome, a Threads post published included; an outcome the ledger lacks = null + reason, LEDGER-ONLY-1107); $ per Unit, $ from Start, % to the next milestone, past per day, projection = the Target's pace × the plan's outcomes needed per Target. The Target's figures on the row = its card's. `offerTargets[]` (TARGET-ROWS-UNIQUE-1107, Today) = ONE entry per (offer, Target), its figures the BRAND's ledger total of the Target outcome; `brandOutcomes[]` = every outcome's ledger total (LEDGER-ONLY-1107). `?salesFunnelCampaignId=` reads one campaign (any status). Org-scoped (x-org-id). No open rate anywhere.",
         "tags": [
           "Sales funnel campaigns"
         ],
@@ -83957,6 +84064,15 @@
                       "type": "string",
                       "description": "Brief, Target, follows-its-plan and strategy changes are recorded from this UTC day only: before it, none is invented."
                     },
+                    "capChangesUnavailableReason": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "campaign_names_no_offer_caps_not_served_yet",
+                        null
+                      ],
+                      "description": "Null = its budget changes (billing-service caps) were read. A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): billing-service does not serve an offer-less caps history yet, so no budget change is listed and none is invented."
+                    },
                     "rules": {
                       "type": "object",
                       "properties": {
@@ -84454,6 +84570,7 @@
                     "decisionsBuiltAt",
                     "silverComputedAt",
                     "settingsRecordedSince",
+                    "capChangesUnavailableReason",
                     "rules",
                     "kindsServed",
                     "total",

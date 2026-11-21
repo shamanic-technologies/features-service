@@ -156,18 +156,27 @@ function passMemos() {
   const models = new Map<string, Promise<CatalogueModel>>();
   return {
     async pricing(c: ShadowCampaign): Promise<{ model: CatalogueModel; ltrBasis: ExpectedBasis }> {
-      const key = `${c.orgId}|${c.brandId}`;
-      if (!econ.has(key)) econ.set(key, fetchBrandLegEconomics(c.brandId, c.orgId));
-      const offer = (await econ.get(key)!).offers.find((o) => o.offerId === c.offerId);
-      if (!offer) throw new ShadowPlanError("offer_not_found", `offer ${c.offerId} is not an offer of brand ${c.brandId}`);
-      const ltr = await offerLifetimeRevenue(offer.lifetimeRevenueUsd);
+      // A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121) has no offer terms to read: it is priced like an offer
+      // that stated no lifetime revenue (the fleet median, basis `fleet`), never on another offer's terms nor a made-up one.
+      let statedLtr: number | null = null;
+      if (c.offerId !== null) {
+        const key = `${c.orgId}|${c.brandId}`;
+        if (!econ.has(key)) econ.set(key, fetchBrandLegEconomics(c.brandId, c.orgId));
+        const offer = (await econ.get(key)!).offers.find((o) => o.offerId === c.offerId);
+        if (!offer) throw new ShadowPlanError("offer_not_found", `offer ${c.offerId} is not an offer of brand ${c.brandId}`);
+        statedLtr = offer.lifetimeRevenueUsd;
+      }
+      const ltr = await offerLifetimeRevenue(statedLtr);
       const mkey = `${ltr.usd}|${ltr.source}`;
       if (!models.has(mkey)) models.set(mkey, loadCatalogueModelForLifetimeRevenue(ltr.usd, ltr.source));
       return { model: await models.get(mkey)!, ltrBasis: ltr.source === "offer_stated" ? "stated" : "fleet" };
     },
     offerSteps(c: ShadowCampaign): Promise<OfferSteps> {
-      const key = `${c.orgId}|${c.brandId}|${c.offerId}`;
-      if (!steps.has(key)) steps.set(key, fetchOfferSteps(c.brandId, c.offerId, { orgId: c.orgId }));
+      // No offer = no step stated: every step stays in play (an offer that never stated its steps reads the same).
+      const offerId = c.offerId;
+      if (offerId === null) return Promise.resolve({ offerId: null, stated: false, steps: null, statedAt: null });
+      const key = `${c.orgId}|${c.brandId}|${offerId}`;
+      if (!steps.has(key)) steps.set(key, fetchOfferSteps(c.brandId, offerId, { orgId: c.orgId }));
       return steps.get(key)!;
     },
   };
@@ -360,7 +369,7 @@ export interface ShadowBody {
   campaignId: string;
   orgId: string;
   brandId: string;
-  offerId: string;
+  offerId: string | null;
   salesFunnelId: string;
   salesFunnelName: string;
   brief: string | null;

@@ -36,6 +36,9 @@ export interface SpendCapacityInput {
 /** Why the projection expects nothing, for good (served as `unavailableReason`). */
 export type CapacityUnavailableReason =
   | "campaign_stopped"
+  /** DISTRY-CALL-IS-CAMPAIGN-1121: a campaign naming NO offer; billing-service serves no offer-less caps read yet, so
+   *  what it can spend is not available yet (stated, never a guess, never an `/offers/null` read). */
+  | "campaign_names_no_offer_caps_not_served_yet"
   | "budget_cap_spent_no_reset"
   | "volume_cap_reached_no_reset"
   | "budget_consumption_unreadable"
@@ -77,6 +80,7 @@ function nextWindowEnd(end: number, period: Exclude<CapPeriod, "one_off">): numb
 /** PURE: the capacity verdict that holds for good (nothing expected), else null. */
 export function capacityUnavailableReason(c: SpendCapacityInput): CapacityUnavailableReason | null {
   if (c.campaignStatus !== "ongoing") return "campaign_stopped";
+  if (c.unreadableReason === "campaign_names_no_offer_caps_not_served_yet") return c.unreadableReason;
   if (c.unreadableReason !== null) return "spend_capacity_unreadable";
   if (c.budget !== null) {
     if (c.budget.reached === null && c.budget.remainingUsd === null) return "budget_consumption_unreadable";

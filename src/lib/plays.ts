@@ -42,6 +42,12 @@ export interface Tactic {
    * an Engine only where one of its runnable scripts states one of them. Null / absent = every Engine.
    */
   decidedByFields?: string[] | null;
+  /**
+   * OPT-IN (OUTREACH-3WAYS-1121, migration 0082): a script judged YES on it serves people who are not the offer's buyers
+   * (the brand's investors, its industry peers): it is kept ONLY for a campaign whose strategy REQUIRES this tactic, and
+   * ruled out everywhere else (no strategy, no brief, a strategy not naming it). Script tactics only. Absent = false.
+   */
+  optIn?: boolean;
 }
 
 /**
@@ -107,13 +113,45 @@ export const writerSubjectKey = (kind: VerdictSubjectKind, key: string): string 
  */
 export function strategyOnEngine(strategy: Strategy, engineScripts: ReadonlyArray<{ tactics: Record<string, unknown> }>, tactics: ReadonlyMap<string, Tactic>): Strategy {
   const onScripts = strategyOnSubject(strategy, "script", tactics);
-  const applies = (id: string) => {
-    const fields = tactics.get(id)?.decidedByFields;
-    if (!fields || fields.length === 0) return true;
-    return engineScripts.some((s) => fields.some((f) => s.tactics[f] !== undefined && s.tactics[f] !== null));
-  };
+  const applies = (id: string) => tacticDecidedOnEngine(tactics.get(id), engineScripts);
   return { ...onScripts, requiresTacticIds: onScripts.requiresTacticIds.filter(applies), excludesTacticIds: onScripts.excludesTacticIds.filter(applies) };
 }
+
+/** PURE: does this Engine decide the tactic's matter (`decidedByFields` stated by one of its runnable scripts; none stated = yes). */
+export function tacticDecidedOnEngine(t: Pick<Tactic, "decidedByFields"> | undefined, engineScripts: ReadonlyArray<{ tactics: Record<string, unknown> }>): boolean {
+  const fields = t?.decidedByFields;
+  if (!fields || fields.length === 0) return true;
+  return engineScripts.some((s) => fields.some((f) => s.tactics[f] !== undefined && s.tactics[f] !== null));
+}
+
+/**
+ * PURE (OUTREACH-3WAYS-1121): the OPT-IN script tactics one Engine's scripts are gated by: `optIn` script tactics whose
+ * matter the Engine decides (`tacticDecidedOnEngine`), in id order. Empty on every Engine while no tactic is opt-in.
+ */
+export function optInTacticsOnEngine(engineScripts: ReadonlyArray<{ tactics: Record<string, unknown> }>, tactics: ReadonlyMap<string, Tactic>): Tactic[] {
+  return [...tactics.values()]
+    .filter((t) => t.optIn === true && subjectOfTactic(t) === "script" && tacticDecidedOnEngine(t, engineScripts))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/**
+ * PURE (OUTREACH-3WAYS-1121, owner rule: a script serving people who are not the offer's buyers runs ONLY where the
+ * campaign asks for them). Why a script is ruled out by an opt-in tactic, or null. `asked` = the tactic ids the
+ * campaign's strategy REQUIRES (none without a strategy). A script judged yes on an opt-in tactic the strategy does not
+ * require is out. A script judged on NOTHING yet (a brand-new dynasty: no verdict on any tactic) is out too until the
+ * sweep judges it (<= 15 min), so a new population script never runs on a buyer campaign in its first minutes; a script
+ * judged on other tactics but not yet on a NEW opt-in tactic stays in (existing scripts keep running while it is judged).
+ */
+export function optInRefusal(optIns: readonly Tactic[], asked: ReadonlySet<string>, verdicts: ReadonlyMap<string, boolean> | undefined): string | null {
+  for (const t of optIns) {
+    if (asked.has(t.id)) continue;
+    const v = verdicts?.get(t.id);
+    if (v === true) return `this script serves people only a campaign asking for them may reach ("${t.name}"), and this campaign's strategy does not ask for "${t.name}"`;
+    if (v === undefined && (!verdicts || verdicts.size === 0)) return `this script is not judged yet on "${t.name}", which only a campaign asking for it may run: kept out until judged`;
+  }
+  return null;
+}
+
 export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[]): Map<string, Map<string, boolean>> {
   const out = new Map<string, Map<string, boolean>>();
   for (const r of rows) {

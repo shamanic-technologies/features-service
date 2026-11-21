@@ -105,6 +105,7 @@ const tacticOf = (r: typeof tactics.$inferSelect): Tactic => ({
   clientLine: r.clientLine,
   appliesTo: ((TACTIC_SUBJECTS as readonly string[]).includes(r.appliesTo) ? r.appliesTo : "workflow") as TacticSubject,
   decidedByFields: r.decidedByFields ?? null,
+  optIn: r.optIn,
 });
 const writerVerdictOf = (r: typeof writerTacticVerdicts.$inferSelect): WriterTacticVerdictRow => ({
   subjectKind: r.subjectKind === "llm" || r.subjectKind === "script" ? r.subjectKind : "template",
@@ -209,11 +210,11 @@ function assertUnique(existing: ReadonlyArray<{ id: string; name: string; descri
   if (sameDescription) throw new DeclarationError(409, `${family}_description_taken`, `the ${family} ${sameDescription.id} already has this description`);
 }
 
-export async function insertTactic(input: { name: string; description: string; createdBy: string; clientLine?: string | null; appliesTo?: TacticSubject }): Promise<Tactic> {
+export async function insertTactic(input: { name: string; description: string; createdBy: string; clientLine?: string | null; appliesTo?: TacticSubject; optIn?: boolean; decidedByFields?: string[] | null }): Promise<Tactic> {
   const id = idOfName(input.name);
   if (!id) throw new DeclarationError(400, "name_invalid", "name must hold at least one letter or digit");
   assertUnique((await loadPlayCatalogueFresh()).tactics, id, input.name, input.description, "tactic");
-  const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy, clientLine: input.clientLine ?? null, appliesTo: input.appliesTo ?? "workflow" }).returning();
+  const [row] = await db.insert(tactics).values({ id, name: input.name, description: input.description, createdBy: input.createdBy, clientLine: input.clientLine ?? null, appliesTo: input.appliesTo ?? "workflow", optIn: input.optIn ?? false, decidedByFields: input.decidedByFields ?? null }).returning();
   invalidatePlayCatalogue();
   return tacticOf(row);
 }
@@ -259,6 +260,27 @@ export async function updateTacticSubject(input: { id: string; appliesTo: Tactic
     .returning();
   invalidatePlayCatalogue();
   return { tactic: tacticOf(row), changed: true, previousAppliesTo };
+}
+
+/**
+ * OUTREACH-3WAYS-1121: make a SCRIPT tactic opt-in (or not) and/or state the script tactics fields it is about
+ * (`decidedByFields`). Nothing is re-judged: only which campaigns may run the scripts judged yes on it moves. A non-script
+ * tactic cannot be opt-in (400 `opt_in_script_only`). `changed:false` when both already hold.
+ */
+export async function updateTacticGate(input: { id: string; optIn?: boolean; decidedByFields?: string[] | null; updatedBy: string }): Promise<{ tactic: Tactic; changed: boolean }> {
+  const current = (await loadPlayCatalogueFresh()).tactics.find((t) => t.id === input.id);
+  if (!current) throw new DeclarationError(404, "tactic_not_found", `no tactic ${input.id} (GET /internal/catalogue/tactics)`);
+  const optIn = input.optIn ?? current.optIn ?? false;
+  if (optIn && (current.appliesTo ?? "workflow") !== "script") throw new DeclarationError(400, "opt_in_script_only", "only a script tactic can be opt-in");
+  const fields = input.decidedByFields === undefined ? (current.decidedByFields ?? null) : input.decidedByFields;
+  if (optIn === (current.optIn ?? false) && JSON.stringify(fields) === JSON.stringify(current.decidedByFields ?? null)) return { tactic: current, changed: false };
+  const [row] = await db
+    .update(tactics)
+    .set({ optIn, decidedByFields: fields, updatedBy: input.updatedBy, updatedAt: new Date() })
+    .where(sql`${tactics.id} = ${input.id}`)
+    .returning();
+  invalidatePlayCatalogue();
+  return { tactic: tacticOf(row), changed: true };
 }
 
 /**

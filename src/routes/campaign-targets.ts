@@ -75,7 +75,9 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
     funnelCampaignSpendCharts(row, brandId, pricing, headers),
     readPlan(row.id),
     // PROJECTION-CAP-1117: the campaign's MEASURED caps (window, remaining, reached). Unreadable = no projection, never a guess.
-    fetchFunnelCampaignCaps(brandId, row, headers).catch((err: Error) => {
+    // DISTRY-CALL-IS-CAMPAIGN-1121: a campaign naming NO offer has no caps read billing serves yet: not asked (never
+    // `/offers/null/...`), its projection says so (`campaign_names_no_offer_caps_not_served_yet`).
+    (row.offerId === null ? Promise.resolve(null) : fetchFunnelCampaignCaps(brandId, { id: row.id, offerId: row.offerId, salesFunnelId: row.salesFunnelId }, headers)).catch((err: Error) => {
       console.error(`[features-service] campaign targets: caps of ${row.id} unreadable (projection null spend_capacity_unreadable): ${err.message}`);
       return null;
     }),
@@ -220,7 +222,7 @@ async function rowFor(row: SalesFunnelCampaignRow, brandId: string, headers: Dow
       campaignStatus: row.status,
       budget: caps?.budget ?? null,
       volumeReached: caps?.volumeReached ?? null,
-      unreadableReason: caps === null ? "billing_caps_unreadable" : null,
+      unreadableReason: row.offerId === null ? "campaign_names_no_offer_caps_not_served_yet" : caps === null ? "billing_caps_unreadable" : null,
     },
     now,
   };

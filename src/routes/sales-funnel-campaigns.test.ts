@@ -153,6 +153,22 @@ describe("GET /brands/:brandId/sales-funnel-campaigns", () => {
     expect(fetchWithRetry.mock.calls[0][0]).toBe("http://campaign:3000/sales-funnel-campaigns?brandId=b1");
   });
 
+  it("a campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121) is listed like any other beside one naming an offer: no offer read, no /offers/null", async () => {
+    fetchWithRetry.mockResolvedValue(
+      new Response(JSON.stringify({ salesFunnelCampaigns: [{ ...FC("fc0", "f1", [unit("c9", "sales-cold-email-outreach", "lead_found_to_conversation")]), offerId: null }, FC("fc1", "f1", [unit("c2", "sales-cold-email-outreach", "lead_found_to_conversation")])] })),
+    );
+    distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
+    computeFeatureRevenue.mockResolvedValue({ headline: { totalPipelineUsd: 0, unpricedReason: null }, costEconomics: { committedCostUsd: 1, roiMultiple: 0, unmeasuredReason: null }, maturity: { isMature: null, legs: [] } });
+    const res = await request(app).get("/brands/b1/sales-funnel-campaigns?pricing=net").set(AUTH);
+    expect(res.status).toBe(200);
+    const byId = new Map(res.body.salesFunnelCampaigns.map((r: { id: string }) => [r.id, r]));
+    expect(byId.get("fc0")).toMatchObject({ offerId: null, name: "Bliss", investedUsd: 1 });
+    expect(byId.get("fc1")).toMatchObject({ offerId: "of1" });
+    const offers = computeFeatureRevenue.mock.calls.map((c) => c[10]).sort();
+    expect(offers).toEqual(["of1", undefined]);
+    expect(fetchWithRetry.mock.calls.some((c) => String(c[0]).includes("/offers/null"))).toBe(false);
+  });
+
   it("every row serves what it produced, step by step (the campaign page's funnel); unreadable = null + reason, money still served", async () => {
     fetchWithRetry.mockResolvedValue(new Response(JSON.stringify({ salesFunnelCampaigns: [FC("fc1", "f1", [unit("c1", "sourcing-apollo-cold-filters", "start_to_lead_found")]), FC("fc2", "f1", [unit("c3", "sourcing-apollo-cold-filters", "start_to_lead_found")])] })));
     distinctChannelFunnels.mockReturnValue([{ key: "sales" }]);
