@@ -9250,6 +9250,101 @@ registry.registerPath({
   },
 });
 
+// ── GET /internal/stats/saas-cash (SAAS-CASH-1121) ──────────
+
+const saasCashFigures = registry.register(
+  "SaasCashFigures",
+  z.object({
+    saasGrossCents: z.number().int().describe("HEADLINE. SaaS gross cash: payments received, before refunds / lost disputes, agency and our own orgs excluded (whole cents)."),
+    saasGrossUsd: z.number(),
+    saasNetCents: z.number().int().describe("SaaS net cash: SaaS gross minus the refunds / lost disputes that happened in the period. Always <= saasGrossCents."),
+    saasNetUsd: z.number(),
+    withAgencyGrossCents: z.number().int().describe("Gross cash with agency: SaaS gross + agency orgs' gross. Our own orgs and unattributed money excluded."),
+    withAgencyGrossUsd: z.number(),
+  }),
+);
+const saasCashSides = z.object({
+  saasCents: z.number().int(),
+  agencyCents: z.number().int(),
+  ownOrgsCents: z.number().int(),
+  unattributedCents: z.number().int().describe("Money billing attributes to no org."),
+  fleetCents: z.number().int().describe("billing's fleet total since inception, every side."),
+  sidesTotalCents: z.number().int(),
+  differenceCents: z.number().int().describe("fleet − Σ sides: the per-(org, day) whole-cent rounding residue."),
+});
+const saasCashView = registry.register(
+  "SaasCash",
+  z.object({
+    computedAt: z.string(),
+    asOf: z.string().describe("The instant billing read the money as of."),
+    basis: z.object({
+      gross: z.string(),
+      net: z.string(),
+      saas: z.string(),
+      withAgency: z.string(),
+      excluded: z.string(),
+      periods: z.string(),
+    }),
+    firstPaymentDay: z.string().nullable().describe("First UTC day any cash moved, fleet-wide; null = nobody ever paid."),
+    weeks: z
+      .array(
+        saasCashFigures.extend({
+          isoWeek: z.string().describe("ISO week, e.g. 2026-W47."),
+          weekStart: z.string().describe("Monday (UTC) the week starts on."),
+          isCurrent: z.boolean().describe("The week holding today (UTC): partial."),
+        }),
+      )
+      .describe("One bar per ISO week since the first payment, every week listed (zeros included)."),
+    days: z
+      .array(
+        z.object({
+          day: z.string(),
+          cash: saasCashFigures.describe("Cash collected that UTC day."),
+          cumulative: saasCashFigures.describe("Cash collected from the first payment up to and including that day."),
+          isCurrent: z.boolean().describe("Today (UTC): partial."),
+        }),
+      )
+      .describe("One point per UTC day since the first payment, every day listed."),
+    totals: z.object({
+      thisWeek: saasCashFigures,
+      sinceInception: saasCashFigures,
+    }),
+    reconciliation: z
+      .object({ gross: saasCashSides, net: saasCashSides })
+      .describe("SaaS + agency + own orgs + unattributed vs billing's fleet totals, since inception."),
+    excludedOrgs: z.array(
+      z.object({
+        orgId: z.string(),
+        orgName: z.string().nullable(),
+        side: z.enum(["agency", "own_org"]),
+        reason: z.string(),
+        grossCents: z.number().int(),
+        netCents: z.number().int(),
+      }),
+    ),
+    saasOrgsWithoutVerdict: z.array(z.string()).describe("Paying orgs billing's own-org read carries no verdict for: counted as SaaS, named."),
+    payingSaasOrgs: z.number().int(),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/saas-cash",
+  summary: "Cash the distribute.you SaaS collected: weekly bars + daily cumulative, gross (headline), net, and gross with agency (internal, api-key)",
+  description:
+    "Owner 2026-11-21 (SAAS-CASH-1121): cash collected, never consumed spend. Three series over the same ISO weeks and UTC days " +
+    "since the first payment: SaaS GROSS (headline: payments received before refunds / lost disputes, agency and our own orgs " +
+    "excluded), SaaS NET (after refunds / lost disputes on the day they happened), GROSS WITH AGENCY (SaaS + agency orgs). " +
+    "From billing's cash per org per UTC day; agency = orgs with stated monthly amounts; own orgs = billing's verdict. " +
+    "Held 5 min, refreshed behind up to 1 h. api-key only; staff-gated at api-service (`/v1/features/audit/saas-cash`).",
+  tags: ["Internal"],
+  responses: {
+    200: { description: "The three series, totals and the reconciliation.", content: { "application/json": { schema: saasCashView } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "billing or the stated amounts store unreadable (`saas_cash_unavailable`).", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
 // ── GET /internal/stats/client-financials (DISTRY-PRINCIPAL-1119) ──────────
 
 const cfMoneyPair = z.object({
