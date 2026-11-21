@@ -20,7 +20,7 @@ export interface TargetDayCount {
 export interface CampaignTargetInput {
   salesFunnelCampaignId: string;
   name: string;
-  offerId: string;
+  offerId: string | null;
   mode: "proactive" | "reactive" | null;
   target: { key: string; label: string; lifecycleRung: string | null } | null;
   /** The Target's outcomes per day from the campaign's pipe(s) landing on it (summed per day); null = no pipe of it lands on the Target. */
@@ -54,7 +54,7 @@ export interface MeasuredReturn {
 export interface CampaignTargetRow {
   salesFunnelCampaignId: string;
   name: string;
-  offerId: string;
+  offerId: string | null;
   target: { key: string; label: string; lifecycleRung: string | null } | null;
   /** Target outcomes since the campaign started (measured). */
   outcomesToDate: number | null;

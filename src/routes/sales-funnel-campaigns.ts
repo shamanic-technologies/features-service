@@ -282,7 +282,9 @@ async function computeFunnelCampaignTable(
 ) {
   const { copies, pipeSteps, runningPathOf, otherPartsById } = await liveCopyOf(rows, headers);
   // The offer's terms, read ONCE per offer and shared by its funnel campaigns.
-  const offerIds = [...new Set(rows.map((r) => r.offerId))];
+  // A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121) has no offer terms: nothing declared to price on, never
+  // the brand's nor another offer's terms (a brand-wide read would price one of its offers under no offer's name).
+  const offerIds = [...new Set(rows.flatMap((r) => (r.offerId === null ? [] : [r.offerId])))];
   const declaredByOffer = new Map(await Promise.all(offerIds.map(async (o) => [o, await fetchDeclaredFunnelsSoft(brandId, headers.orgId, o)] as const)));
 
   const out = await mapWithConcurrency(rows, 3, async (r) => {
@@ -296,7 +298,7 @@ async function computeFunnelCampaignTable(
     const campaignIds = units.map((u) => u.campaignId).sort();
     const distinct = distinctChannelFunnels(units);
     const funnel = distinct.length === 1 ? distinct[0] : null;
-    const declared = declaredByOffer.get(r.offerId) ?? [];
+    const declared = r.offerId === null ? [] : (declaredByOffer.get(r.offerId) ?? []);
     const priced = funnel ? pricingForUnits(declared, priceOnDeclaredFunnel(declared), units) : undefined;
     // WHERE THIS CAMPAIGN TOOK ITS PEOPLE OVER (`lib/value-added.ts`, owner 2026-10-11, one formula for every
     // campaign): the funnel's first step unless its own units produce it. Null = from nothing (it found them):
@@ -342,7 +344,7 @@ async function computeFunnelCampaignTable(
               });
               return { headline: t.headline, costEconomics: t.costEconomics, maturity: t.maturity, valueAdded: t.valueAdded };
             }
-            const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId, undefined, DEFAULT_PRICED_CAUSES);
+            const body = await computeFeatureRevenue(featureSlugs, brandId, campaignIds, funnel, headers, undefined, priced, false, pricing, undefined, r.offerId ?? undefined, undefined, DEFAULT_PRICED_CAUSES);
             return { headline: body.headline, costEconomics: body.costEconomics, maturity: body.maturity ?? null, valueAdded: null };
           },
         });

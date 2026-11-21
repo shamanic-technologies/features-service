@@ -54,14 +54,14 @@ export async function writeJudgment(j: BriefJudgment & { orgId: string; briefUpd
     .onConflictDoUpdate({ target: [factoryBriefJudgments.campaignId, factoryBriefJudgments.basePipeId], set: { ...values } });
 }
 
-export async function writePlan(row: { campaignId: string; orgId: string; brandId: string; offerId: string; status: ShadowStatus; failure: string | null; body: unknown; computedAt: Date }): Promise<void> {
+export async function writePlan(row: { campaignId: string; orgId: string; brandId: string; offerId: string | null; status: ShadowStatus; failure: string | null; body: unknown; computedAt: Date }): Promise<void> {
   await db
     .insert(factoryShadowPlans)
     .values(row)
     .onConflictDoUpdate({ target: factoryShadowPlans.campaignId, set: { orgId: row.orgId, brandId: row.brandId, offerId: row.offerId, status: row.status, failure: row.failure, body: row.body, computedAt: row.computedAt } });
 }
 
-export async function readPlan(campaignId: string): Promise<{ orgId: string; brandId: string; offerId: string; status: string; failure: string | null; body: unknown; computedAt: string } | null> {
+export async function readPlan(campaignId: string): Promise<{ orgId: string; brandId: string; offerId: string | null; status: string; failure: string | null; body: unknown; computedAt: string } | null> {
   const [r] = await db.select().from(factoryShadowPlans).where(eq(factoryShadowPlans.campaignId, campaignId)).limit(1);
   return r ? { orgId: r.orgId, brandId: r.brandId, offerId: r.offerId, status: r.status, failure: r.failure, body: r.body, computedAt: r.computedAt.toISOString() } : null;
 }

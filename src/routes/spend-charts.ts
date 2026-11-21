@@ -62,7 +62,8 @@ export interface PipeChart extends LedgerSpendChart {
 export interface FunnelCampaignSpendChartsBody {
   salesFunnelCampaignId: string;
   brandId: string;
-  offerId: string;
+  /** Null = the campaign names no offer (DISTRY-CALL-IS-CAMPAIGN-1121). */
+  offerId: string | null;
   pricing: Pricing;
   costBasis: "charged";
   campaign: LedgerSpendChart;
@@ -250,7 +251,11 @@ export async function computeFunnelCampaignSpendCharts(row: SalesFunnelCampaignR
     ),
     Promise.all(
       ordered.map(async (u): Promise<PipeChart> => {
-        const expected = await expectedReturnForCampaign(identity, brandId, { offerId: row.offerId, featureSlug: u.featureSlug, legKeys: [u.legKey] }, null);
+        // No offer named (DISTRY-CALL-IS-CAMPAIGN-1121): stated, never the brand's figure under no offer's name.
+        const expected =
+          row.offerId === null
+            ? unavailableExpectedReturn("campaign_names_no_offer")
+            : await expectedReturnForCampaign(identity, brandId, { offerId: row.offerId, featureSlug: u.featureSlug, legKeys: [u.legKey] }, null);
         const chart = await onLedger(await chartOf(ctx, pipeScope(row, u, pipeSteps), expected), [u.campaignId], "pipe");
         return { campaignId: u.campaignId, pipeId: u.pipeId, featureSlug: u.featureSlug, legKey: u.legKey, status: u.status, ...chart };
       }),
@@ -266,7 +271,7 @@ export function funnelCampaignSpendCharts(row: SalesFunnelCampaignRow, brandId: 
     scopeKey: buildScopeKey(row.id, {
       orgId: headers.orgId,
       brandId,
-      offerId: row.offerId,
+      offerId: row.offerId ?? "",
       units: row.units.map((u) => `${u.campaignId}:${u.legKey}`).sort().join("+"),
       // SPEND-CHART-TARGET-1108: the chart counts the Target, so a moved Target is another cell.
       target: row.target ?? "",
@@ -397,10 +402,11 @@ export async function brandChartScope(brandId: string, headers: DownstreamHeader
     fetchOfferChannelMap(brandId, headers),
     assertBrandHeld(brandId, headers),
   ]);
-  const ofOffers = rows.filter((r) => Boolean(r.offerId));
-  const offerIds = [...new Set([...channelMap.offerIds, ...ofOffers.map((r) => r.offerId)])].sort();
+  // A campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121) is the brand's spend like any other: it is charted with the
+  // brand's campaigns; it adds no offer (the expected figures stay the picked offer model's).
+  const offerIds = [...new Set([...channelMap.offerIds, ...rows.flatMap((r) => (r.offerId ? [r.offerId] : []))])].sort();
   const channels = mergeOfferChannels(offerIds.map((o) => channelMap.channelsOf(o)));
-  return { rows: ofOffers, offerIds, channels };
+  return { rows, offerIds, channels };
 }
 
 router.get("/brands/:brandId/spend-charts", apiKeyAuth, async (req, res) => {

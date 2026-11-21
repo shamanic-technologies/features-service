@@ -179,6 +179,22 @@ describe("GET /brands/:brandId/campaign-targets", () => {
   });
 
   // PROJECTION-CAP-1117 (prod 2026-11-17, Wide Email: monthly cap reached, « next Lead found in about 2 hours »).
+  it("a campaign naming NO offer (DISTRY-CALL-IS-CAMPAIGN-1121): served like any other, its caps never asked at /offers/null, its projection says why", async () => {
+    fetchSalesFunnelCampaigns.mockResolvedValue([{ ...row("c1", "ongoing"), offerId: null }]);
+    budget.mockClear();
+    const res = await request(app).get("/brands/b1/campaign-targets");
+    expect(res.status).toBe(200);
+    expect(budget).not.toHaveBeenCalled();
+    const t = res.body.targets[0];
+    expect(t).toMatchObject({ salesFunnelCampaignId: "c1", offerId: null, outcomesToDate: 2, costPerOutcomeUsd: 15 });
+    expect(t.projection).toMatchObject({ outcomesPerDay: null, unavailableReason: "campaign_names_no_offer_caps_not_served_yet" });
+    // A campaign naming an offer keeps its caps read, unchanged.
+    fetchSalesFunnelCampaigns.mockResolvedValue([row("c1", "ongoing")]);
+    const withOffer = (await request(app).get("/brands/b1/campaign-targets")).body.targets[0];
+    expect(budget.mock.calls[0]![1]).toMatchObject({ id: "c1", offerId: "o1", salesFunnelId: "f" });
+    expect(withOffer.projection).toMatchObject({ outcomesPerDay: 2, unavailableReason: null });
+  });
+
   it("a cap reached for its window: nothing expected until it resets, on the row, its cards and Today's entry; a stopped campaign expects nothing", async () => {
     const now = new Date();
     const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();

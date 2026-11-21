@@ -90,7 +90,7 @@ export function pipeCalls(calls: CampaignCalls, committedCents: number | null): 
 export interface FunnelCampaignActivityBody {
   salesFunnelCampaignId: string;
   brandId: string;
-  offerId: string;
+  offerId: string | null;
   salesFunnelId: string;
   name: string;
   createdAt: string;
