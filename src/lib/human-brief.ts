@@ -71,7 +71,7 @@ export function robotBriefSplit(brief: string | null | undefined, stepLabels: Re
 /** PURE: does this text still hold a robot line anywhere (the AC sweep: none may start with one)? */
 export const isRobotBrief = (brief: string | null | undefined, stepLabels: ReadonlySet<string>): boolean => robotBriefSplit(brief, stepLabels) !== null;
 
-export const HUMAN_BRIEF_RULE = "human-brief-v1";
+export const HUMAN_BRIEF_RULE = "human-brief-v2";
 
 /** PURE: what the writer reads. Owner words: short, concise, clear, the client's value, how in a few plain words. */
 export function humanBriefPrompt(input: HumanBriefInput): { systemPrompt: string; message: string } {
@@ -79,7 +79,8 @@ export function humanBriefPrompt(input: HumanBriefInput): { systemPrompt: string
     "You write the brief of one B2B sales campaign: one or two short sentences, in plain English, that a busy founder reads in two seconds and agrees with.",
     "Say what the campaign aims at, in the client's words of value (who it reaches and what it brings them), then how, in a few plain words (for example \"by cold email\").",
     "Name a channel only by what it does in everyday words (cold email, LinkedIn, X posts, our AI books the meetings). Leave out the steps the client's own team works.",
-    "When a channel follows a specific rule (for example only confirmed email addresses), keep that rule in a few plain words.",
+    "When a channel follows a specific rule (for example only confirmed email addresses, or only people already emailed), keep that rule in at most eight plain words, its gist only.",
+    "At most 30 words in total.",
     "Never list channels, steps or strategies. Never write a label followed by a colon. No dashes, no bullet points, no line breaks, no quotes.",
     "Never use the pattern \"X, not Y\" or \"not X but Y\". Never start a sentence with It, They or This. Plain words, one idea per sentence.",
     "Answer with the brief only.",
