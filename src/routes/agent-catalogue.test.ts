@@ -464,22 +464,22 @@ describe("agent catalogue lists (context-window sized)", () => {
     for (const r of steps.body.rows) if (r.costUsd !== null) expect(r.costPer).toBe(`per ${r.name.toLowerCase()}`);
   });
 
-  it("a MIXED funnel (cold email + AI meeting booking) is served mixed and never runnable (owner 2026-10-10)", async () => {
+  it("a MIXED funnel (cold email + AI meeting booking) is served mixed, and runnable when its pipes are (ONE-CAMPAIGN-VOLUME-1122)", async () => {
     const victory = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
     const f = await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory)}`).set(KEY);
-    expect(f.body).toMatchObject({ mixed: true, runnable: false, type: "proactive" });
-    const list = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", runnable: "true", limit: 25 }).set(KEY);
-    expect(list.body.rows.map((r: { id: string }) => r.id)).not.toContain(`start_to_lead_found@lead-sourcing+${victory}`);
-    expect(list.body.rows.every((r: { mixed: boolean }) => r.mixed === false)).toBe(true);
-    const reactive = list.body.rows.filter((r: { type: string }) => r.type === "reactive");
-    expect(reactive.length).toBeGreaterThan(0);
+    expect(f.body).toMatchObject({ mixed: true, type: "proactive" });
+    const pipes = await Promise.all(
+      ["sales-cold-email-outreach|lead_found_to_conversation", "ai-meeting-booking|conversation_to_meeting_booked"].map((id) => request(app).get(`/internal/catalogue/pipes/${encodeURIComponent(id)}`).set(KEY)),
+    );
+    // Mixed no longer decides: the funnel runs exactly when every pipe on it runs.
+    expect(f.body.runnable).toBe(pipes.every((p) => p.body.runnable === true));
   });
 
   it("the PUBLIC sales funnel list needs no key and serves only runnable funnels, whatever the query says (owner 2026-10-10)", async () => {
     const pub = await request(app).get("/public/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", runnable: "false", limit: 25 });
     expect(pub.status).toBe(200);
     expect(pub.body.rows.length).toBeGreaterThan(0);
-    expect(pub.body.rows.every((r: { runnable: boolean; mixed: boolean }) => r.runnable && !r.mixed)).toBe(true);
+    expect(pub.body.rows.every((r: { runnable: boolean }) => r.runnable)).toBe(true);
     const internal = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", runnable: "true", limit: 25 }).set(KEY);
     expect(pub.body.rows.map((r: { id: string }) => r.id)).toEqual(internal.body.rows.map((r: { id: string }) => r.id));
     const all = await request(app).get("/internal/catalogue/sales-funnels").query({ containsChannels: "ai-meeting-booking", limit: 25 }).set(KEY);
