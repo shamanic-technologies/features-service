@@ -28,6 +28,11 @@ describe("robotBriefSplit: only the robot lines our system wrote", () => {
     });
   });
 
+  it("a robot brief whose line breaks arrived escaped as text", () => {
+    const brief = "Use only these channels: \\\\n Use AI Follow-up Email (Signup to Paid client). \\\\n  \\\\n Write one short, warm email.\n\nCold email pitching the offer only.";
+    expect(robotBriefSplit(brief, LABELS)).toMatchObject({ shape: "features_prefill", rest: "Write one short, warm email.\n\nCold email pitching the offer only." });
+  });
+
   it("a person's brief that starts with « Goal: » in their own words is not ours", () => {
     expect(robotBriefSplit("Goal: earn the trust of founders who run a small B2B service business alone.\n\nThe first email offers an introduction.", LABELS)).toBeNull();
   });

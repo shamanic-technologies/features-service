@@ -49,7 +49,9 @@ export type RobotShape = "features_prefill" | "campaign_service_birth";
  */
 export function robotBriefSplit(brief: string | null | undefined, stepLabels: ReadonlySet<string>): { shape: RobotShape; robot: string; rest: string } | null {
   if (!brief) return null;
-  const lines = brief.replace(/\r\n/g, "\n").split("\n");
+  // A robot brief relayed through an API can arrive with its line breaks escaped as text (« \\n »): read them as breaks.
+  const unescaped = /^(Use only these channels:|Goal: )/.test(brief.trim()) ? brief.replace(/[ \t]*(?:\\)+n[ \t]*/g, "\n") : brief;
+  const lines = unescaped.replace(/\r\n/g, "\n").split("\n");
   let i = 0;
   let shape: RobotShape;
   if (lines[0]?.trim() === FEATURES_HEAD) {
