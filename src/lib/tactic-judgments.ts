@@ -300,6 +300,9 @@ function scriptTacticQuestion(t: Pick<Tactic, "name" | "description">) {
       `Does this script follow the tactic "${t.name}"? The tactic: ${t.description} ` +
       "A script is the code that makes one unit of its engine's outcome; its tactics are data it carries (for example the body it sends to a service). " +
       "Judge only on what the script actually does: its code, the calls it makes and the tactics data it sends. Ignore its name and any label. " +
+      // OUTREACH-3WAYS-1121: three intro scripts share one code and pick their kind of first email by tactic; the judge
+      // read the branch written for the other kinds and tagged "Ask who they want to meet" as naming a person.
+      "Several scripts can share one code that branches on its tactics data: judge only the branch THIS script's own tactics select, never a branch the code holds for other tactics values. " +
       "When you see one part of a long script (`part`), answer yes when that part shows it doing what the tactic describes.",
     criteria: {
       true: `The script, as written and with its tactics data, does exactly what the tactic describes: ${t.description}`,
