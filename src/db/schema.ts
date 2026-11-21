@@ -643,6 +643,11 @@ export const tactics = pgTable("tactics", {
    * (the matter is that Engine's decision). Null = applies on every Engine.
    */
   decidedByFields: text("decided_by_fields").array(),
+  /**
+   * OPT-IN (migration 0082, OUTREACH-3WAYS-1121): a script judged yes on it is kept only where the campaign's strategy
+   * REQUIRES this tactic (`optInRefusal`, lib/plays.ts). Script tactics only.
+   */
+  optIn: boolean("opt_in").notNull().default(false),
 });
 
 export const strategies = pgTable("strategies", {
