@@ -69,8 +69,8 @@ import { readOfferBriefContext, writeHumanBrief, type OfferBriefContext } from "
 import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type ScriptRunResult, type UnpickedResult } from "../lib/engine-shadow-io.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsOnPipeOf } from "../lib/script-strategy.js";
-import { askJev as askEngineJev, labelOfOutcome, listEngineStrategies } from "../lib/engine-strategy-io.js";
-import { engineStrategyOptions, engineStrategyState } from "../lib/engine-strategy.js";
+import { askJev as askEngineJev, labelOfOutcome, listEngineStrategies, writeEngineStrategy } from "../lib/engine-strategy-io.js";
+import { carriedOntoRewrite, engineStrategyOptions, engineStrategyState } from "../lib/engine-strategy.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
 import { withEnginePickMarks, withFactoryEngineMarks } from "../lib/catalogue-mark-serving.js";
@@ -274,6 +274,11 @@ async function prefillBriefs(
       await patchBrief(c, brief);
       await recordPrefill({ campaignId: c.id, orgId: c.orgId, brief });
       c.brief = brief;
+      // The rewrite says what the robot text said: every Engine keeps its verdict on the new text (HUMAN-BRIEF-1121).
+      if (robot) for (const row of await listEngineStrategies(c.id)) {
+        const carried = carriedOntoRewrite(row, brief);
+        if (carried) await writeEngineStrategy(carried);
+      }
       return { ...done_, outcome: robot ? "rewritten" : "written" };
     } catch (error) {
       console.error(`[features-service] factory brief prefill failed for campaign ${c.id}:`, error);

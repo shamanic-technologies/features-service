@@ -21,6 +21,7 @@ const mem = vi.hoisted(() => ({
   pipeCalls: 0,
   patches: [] as Array<{ url: string; headers: Record<string, string>; body: any }>,
   jevFails: false,
+  engineRows: [] as any[],
 }));
 
 vi.mock("../lib/factory-shadow-store.js", () => ({
@@ -53,6 +54,14 @@ vi.mock("./agent-catalogue.js", () => ({ loadCatalogueModelForLifetimeRevenue: v
 vi.mock("../lib/sales-funnel-campaigns-client.js", () => ({ fetchSalesFunnelCampaigns: vi.fn(async () => mem.campaigns) }));
 vi.mock("../lib/brand-leg-economics-client.js", () => ({ fetchBrandLegEconomics: vi.fn(async () => ({ legRates: [], offers: [{ offerId: "offer-1", name: "O", lifetimeRevenueUsd: 3000 }] })) }));
 vi.mock("../lib/offer-lifetime-revenue.js", () => ({ offerLifetimeRevenue: vi.fn(async (usd: number) => ({ usd, source: "offer_stated" })) }));
+vi.mock("../lib/engine-strategy-io.js", () => ({
+  askJev: vi.fn(),
+  labelOfOutcome: (o: string) => o,
+  listEngineStrategies: vi.fn(async (id: string | null) => mem.engineRows.filter((r) => r.campaignId === id)),
+  writeEngineStrategy: vi.fn(async (row: any) => {
+    mem.engineRows = [...mem.engineRows.filter((r) => !(r.campaignId === row.campaignId && r.outcome === row.outcome)), row];
+  }),
+}));
 vi.mock("../lib/human-brief-io.js", () => ({
   readOfferBriefContext: vi.fn(async () => ({ offer: { name: "Payroll audit", description: null }, audiences: ["HR leaders"] })),
   // The writer is trusted: the suite answers a fixed human sentence.
@@ -190,6 +199,7 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
       { ...campaign("Goal: earn the trust of founders, by offering a free introduction."), id: "sfc-12" },
       { ...campaign("Edited by the owner since."), id: "sfc-8" },
     ];
+    mem.engineRows = [{ campaignId: "sfc-9", outcome: "email_sent", orgId: "org-1", strategyId: "valid-only", source: "judge", briefHash: "old", optionsSignature: "sig", confidence: 0.8, model: "jev", carriedFrom: null }];
     const before = mem.patches.length;
     const dry = await request(app).post("/internal/factory-shadow/prefill-briefs").set({ "x-api-key": "test-key" }).send({});
     expect(dry.body).toMatchObject({ apply: false, wouldRewrite: 2, briefStated: 2, rewritten: 0 });
@@ -200,6 +210,8 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     expect(brief("sfc-9")).toBe("Win paid clients for Payroll audit by cold email.");
     expect(brief("sfc-11")).toBe("Win paid clients for Payroll audit by cold email.\n\nCold email pitching the offer only.");
     expect(res.body.rows.find((r: any) => r.campaignId === "sfc-11")).toMatchObject({ robotShape: "campaign_service_birth", previousBrief: expect.stringContaining("Goal: Paid client") });
+    // Every Engine keeps its verdict on the new text: carried, never re-asked on a rewording.
+    expect(mem.engineRows).toEqual([expect.objectContaining({ campaignId: "sfc-9", outcome: "email_sent", strategyId: "valid-only", source: "carried", carriedFrom: "human_brief_rewrite", briefHash: expect.not.stringMatching(/^old$/) })]);
     expect(brief("sfc-12")).toBeUndefined();
     expect(brief("sfc-8")).toBeUndefined();
     for (const p of mem.patches) expect(p.body.brief).not.toMatch(/Use only these channels|^Goal: /);
