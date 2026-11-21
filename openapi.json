@@ -75465,6 +75465,11 @@
                             "type": "integer",
                             "nullable": true,
                             "description": "The state's rank within its family, 1 = first (interest: 1..4; visit: 1). Null when `leadState` is null."
+                          },
+                          "towardStep": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The step this one leads to, as its declaration states it (`email_queued` -> `email_sent`, `message_queued` -> `message_sent`); null when none is stated (every coded step). Read by billing-service to count a queue decision as the contact it leads to (OUTREACH-3WAYS-1121)."
                           }
                         },
                         "required": [
@@ -75477,7 +75482,8 @@
                           "subjectKind",
                           "leadState",
                           "leadStateFamily",
-                          "leadStateRank"
+                          "leadStateRank",
+                          "towardStep"
                         ]
                       }
                     }

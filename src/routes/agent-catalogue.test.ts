@@ -529,7 +529,8 @@ describe("agent catalogue lists (context-window sized)", () => {
     const staff = new Map(internal.body.rows.map((r: { id: string; name: string; pluralName: string; icon: string; lifecycleRung: string | null; lifecycleRank: number | null; subjectKind: string | null; leadState: string | null; leadStateFamily: string | null; leadStateRank: number | null }) => [r.id, { key: r.id, name: r.name, pluralName: r.pluralName, icon: r.icon, lifecycleRung: r.lifecycleRung, lifecycleRank: r.lifecycleRank, subjectKind: r.subjectKind, leadState: r.leadState, leadStateFamily: r.leadStateFamily, leadStateRank: r.leadStateRank }]));
     expect(pub.body.total).toBe(staff.size);
     expect(pub.body.rows).toHaveLength(staff.size);
-    for (const r of pub.body.rows) expect(r).toEqual(staff.get(r.key));
+    // `towardStep` is the one public field beside the staff read's (OUTREACH-3WAYS-1121, pinned below).
+    for (const { towardStep: _toward, ...r } of pub.body.rows) expect(r).toEqual(staff.get(r.key));
     expect(pub.body.rows.find((r: { key: string }) => r.key === "conversation")).toMatchObject({ icon: "chat-circle-text" });
     // LEAD-FOUND-LABEL-1108 (owner 2026-11-08): the outcome "Lead found" (key unchanged) and its plural "Leads found".
     expect(pub.body.rows.find((r: { key: string }) => r.key === "lead_found")).toMatchObject({ name: "Lead found", pluralName: "Leads found" });
@@ -911,6 +912,26 @@ describe("lifecycle ladder (owner 2026-10-17, LIFECYCLE-LADDER-1017)", () => {
     expect(pub.body.rows.find((r: { key: string }) => r.key === "meeting_booked")).toMatchObject({ lifecycleRank: 5 });
     const staff = await request(app).get("/internal/catalogue/steps/paid_client").set(KEY);
     expect(staff.body).toMatchObject({ lifecycleRung: "paid_client", lifecycleRank: 7 });
+  });
+
+  it("every public row states the step it leads to: a declared step's towardStep, null on a coded step (OUTREACH-3WAYS-1121)", async () => {
+    const base = { description: "A send.", shortDescription: "A send", icon: "paper-plane", subjectKind: "person", createdBy: "agent" };
+    const declare = (key: string, label: string, towardStep: string) =>
+      request(app).post("/internal/catalogue/steps").set(KEY).send({ ...base, key, label, towardStep, towardRatePct: 90, lifecycleRung: key.endsWith("_queued") ? "none" : "contacted" });
+    expect((await declare("message_sent", "Message sent", "conversation")).status).toBe(201);
+    expect((await declare("email_sent", "Email sent", "conversation")).status).toBe(201);
+    expect((await declare("email_queued", "Email queued", "email_sent")).status).toBe(201);
+    expect((await declare("message_queued", "Message queued", "message_sent")).status).toBe(201);
+    const pub = await request(app).get("/public/catalogue/steps");
+    expect(pub.status).toBe(200);
+    const toward = new Map(pub.body.rows.map((r: { key: string; towardStep: string | null }) => [r.key, r.towardStep]));
+    expect(toward.get("email_queued")).toBe("email_sent");
+    expect(toward.get("message_queued")).toBe("message_sent");
+    expect(toward.get("email_sent")).toBe("conversation");
+    // A coded step states none: null, never absent.
+    for (const key of CHANNEL_STEP_KEYS) expect(toward.get(key), key).toBeNull();
+    // Nothing else moved: the queue steps keep the rung and subject they were declared with.
+    expect(pub.body.rows.find((r: { key: string }) => r.key === "email_queued")).toMatchObject({ lifecycleRung: "none" });
   });
 
   it("a declared step states its rung as data, at creation or later, never through code", async () => {
