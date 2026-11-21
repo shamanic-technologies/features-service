@@ -83248,8 +83248,8 @@
     },
     "/internal/factory-shadow/prefill-briefs": {
       "post": {
-        "summary": "Prefill the brief of every funnel campaign whose brief is empty with what it runs today (internal, api-key; dry run unless apply)",
-        "description": "FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28): every funnel campaign of every org, any status, whose brief is empty and was never prefilled gets one line per pipe of its running funnel that runs a named strategy, written from the strategy's description, through campaign-service's own PATCH as `system-features-service`. A stated brief is never overwritten; a campaign is prefilled once (a brief cleared afterwards stays empty). Body `{apply: true}` writes; anything else is a dry run. The 3-hour pass prefills new live campaigns the same way before judging them.",
+        "summary": "Give every funnel campaign a human brief: prefill an empty one, rewrite a robot-shaped one our system wrote (internal, api-key; dry run unless apply)",
+        "description": "FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28) + HUMAN-BRIEF-1121 (owner 2026-11-21: « Partout où tu as mis ça remplace par du langage humain »): every funnel campaign of every org, any status. An empty brief never prefilled gets one or two plain sentences (what it aims at, how, in the client's words) written by chat-service's platform complete from the offer and the funnel the client chose. A ROBOT-shaped brief our system wrote (« Use only these channels:\nUse X (A to B)… », « Goal: <step> for <offer>.\nUse only these channels: … ») has its robot lines replaced by that human text, any text after them kept word for word. Any other brief is never touched. Written through campaign-service's own PATCH as `system-features-service`. Body `{apply: true}` writes; anything else is a dry run (the same text is written on apply: stored per input). `rewriteRobot: false` leaves robot briefs; `campaignIds` narrows; `replay: true` asks the Engine brief judge, per Engine the campaign holds a judged verdict on, on the robot text AND the human text (nothing stored). The 3-hour pass does the same for live campaigns once a whole rewrite was applied.",
         "tags": [
           "Internal"
         ],
@@ -83261,6 +83261,18 @@
                 "properties": {
                   "apply": {
                     "type": "boolean"
+                  },
+                  "rewriteRobot": {
+                    "type": "boolean"
+                  },
+                  "replay": {
+                    "type": "boolean"
+                  },
+                  "campaignIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 }
               }
@@ -83289,9 +83301,12 @@
                     },
                     "rewritten": {
                       "type": "integer",
-                      "description": "Briefs WE wrote and nobody edited since, rewritten to what we write now."
+                      "description": "Robot-shaped briefs our system wrote, rewritten in plain words."
                     },
                     "wouldRewrite": {
+                      "type": "integer"
+                    },
+                    "robotKept": {
                       "type": "integer"
                     },
                     "briefStated": {
@@ -83300,14 +83315,94 @@
                     "prefilledBefore": {
                       "type": "integer"
                     },
-                    "plainDefaults": {
-                      "type": "integer"
-                    },
                     "unreadable": {
                       "type": "integer"
                     },
                     "writeFailed": {
                       "type": "integer"
+                    },
+                    "replay": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "engines": {
+                          "type": "integer"
+                        },
+                        "same": {
+                          "type": "integer"
+                        },
+                        "differ": {
+                          "type": "integer"
+                        },
+                        "failed": {
+                          "type": "integer"
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "campaignId": {
+                                "type": "string"
+                              },
+                              "engines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "outcome": {
+                                      "type": "string"
+                                    },
+                                    "stored": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "onRobotText": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "onHumanText": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "humanConfidence": {
+                                      "type": "number",
+                                      "nullable": true
+                                    },
+                                    "same": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "outcome",
+                                    "stored",
+                                    "onRobotText",
+                                    "onHumanText",
+                                    "humanConfidence",
+                                    "same"
+                                  ]
+                                }
+                              },
+                              "failure": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "campaignId",
+                              "engines",
+                              "failure"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "engines",
+                        "same",
+                        "differ",
+                        "failed",
+                        "rows"
+                      ]
                     },
                     "rows": {
                       "type": "array",
@@ -83336,12 +83431,25 @@
                               "would_write",
                               "rewritten",
                               "would_rewrite",
+                              "robot_kept",
                               "brief_stated",
                               "prefilled_before",
-                              "plain_defaults",
                               "unreadable",
                               "write_failed"
                             ]
+                          },
+                          "robotShape": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "features_prefill",
+                              "campaign_service_birth",
+                              null
+                            ]
+                          },
+                          "previousBrief": {
+                            "type": "string",
+                            "nullable": true
                           },
                           "brief": {
                             "type": "string",
@@ -83359,6 +83467,8 @@
                           "salesFunnelName",
                           "status",
                           "outcome",
+                          "robotShape",
+                          "previousBrief",
                           "brief",
                           "failure"
                         ]
@@ -83372,11 +83482,12 @@
                     "wouldWrite",
                     "rewritten",
                     "wouldRewrite",
+                    "robotKept",
                     "briefStated",
                     "prefilledBefore",
-                    "plainDefaults",
                     "unreadable",
                     "writeFailed",
+                    "replay",
                     "rows"
                   ]
                 }
@@ -83385,6 +83496,147 @@
           },
           "502": {
             "description": "campaign-service unreadable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/campaign-brief": {
+      "get": {
+        "summary": "The brief a campaign would start with, in plain words, before it exists (onboarding prefill)",
+        "description": "HUMAN-BRIEF-1121 (owner 2026-11-21: « Prefill un résumé de sa campaign en langage naturel, court concis, clair. Qu'il peut cliquer pour éditer »). One or two short sentences: what the campaign aims at, in the client's words of value, and how in a few plain words (« by cold email »), never a list of channels, steps or strategies. Built from the offer (brand-service: name, description), who it is for (the offer's audiences) and what the card picked (`salesFunnelId`: its channels and any non-default play; `target`: the step it aims at, else the funnel's last). Written once per inputs by chat-service's platform complete and stored: the same inputs answer the same text. Org-scoped (x-org-id). The onboarding shows it editable and sends it as the campaign's brief.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "salesFunnelId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "target",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The brief.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "salesFunnelId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "target": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "brief": {
+                      "type": "string",
+                      "description": "One or two plain sentences, no line break, no dash."
+                    },
+                    "model": {
+                      "type": "string",
+                      "description": "The model release that wrote it."
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "brandId",
+                    "salesFunnelId",
+                    "target",
+                    "brief",
+                    "model"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "brand_id_required | sales_funnel_unknown | target_unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found | offer_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "brief_unwritable (a producer or the writer could not answer)",
             "content": {
               "application/json": {
                 "schema": {

@@ -697,7 +697,7 @@ export function pipeWords(model: CatalogueModel, p: CataloguePipe): string {
 }
 
 /** The pipe judge's rule version: bumped when the question changes, so every stored verdict is asked again. */
-export const PIPE_JUDGE_RULE = "channel-job-v4";
+export const PIPE_JUDGE_RULE = "channel-job-v5";
 
 /** PURE: a fingerprint of what Jev judged a pipe on: its words or the question's rule move it (a re-judge). */
 export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(`${PIPE_JUDGE_RULE}|${pipeWords(model, p)}`);
@@ -724,6 +724,7 @@ export const pipeVerdictCurrent = (v: Pick<PipeVerdict, "briefHash" | "pipeSigna
  * channel that does what the brief asks (who it reaches, how it works) is the brief asking for it, and another channel's
  * job rules it out only when none of its plays fits; the keep reasons come first. Replay on the 790 verdicts of 31 live
  * briefs: every « Use only these channels » brief unchanged (349 verdicts), Lead Sourcing kept on Past Email Replies.
+ * v5 (HUMAN-BRIEF-1121): briefs are plain words now (« by cold email »), never a channel list; the rule-out example says so.
  */
 export function pipeQuestion(channelName: string, words: string) {
   return {
@@ -734,7 +735,7 @@ export function pipeQuestion(channelName: string, words: string) {
       `Answer no when the brief names "${channelName}" (even with a strategy after it: a strategy never rules the channel out); ` +
       `when one of the plays of "${channelName}" does what the brief asks (it reaches the people the brief describes, or works the way the brief says): the brief then asks for "${channelName}"; ` +
       `or when the brief asks for no channel to do the job of "${channelName}". Words about who to reach (an audience, a region, addresses never written to, people already emailed), what to say or offer, or the language ask for no channel. ` +
-      `Answer yes only when the brief lists the channels to use (a list such as "Use only these channels: ...") and "${channelName}" is not in it; ` +
+      `Answer yes only when the brief says to use only some channels (for example "only by cold email" or "only on LinkedIn") and "${channelName}" is not one of them nor does its job a different way; ` +
       `or when the brief asks for another channel to do the same job as "${channelName}" (the same move between the same two steps: for example it asks for emails to get replies and "${channelName}" gets replies another way), none of the plays of "${channelName}" does what the brief asks, and it never asks for "${channelName}"; ` +
       `or when the brief says not to use "${channelName}". ` +
       "A channel asked for one job never rules out a channel doing another job: emails that get replies say nothing about the channels that find the people. Judge on the brief's words only.",
@@ -775,26 +776,6 @@ export function playSentenceOf(model: CatalogueModel, running: CataloguePipe): s
 
 /** No em or en dash in client copy (owner rule): a dash between words becomes a comma. */
 export const withoutDashes = (text: string): string => text.replace(/\s*[\u2014\u2013]\s*/g, ", ");
-
-/**
- * PURE: the brief a funnel campaign is PREFILLED with (owner 2026-10-28, FACTORY-P1-BRIEF-PREFILL): what it runs today, one
- * line per pipe of its running funnel that runs a named strategy, so the judge re-picks the plays running today until the
- * owner edits it. Null when every pipe runs its plain default (nothing to say: an empty brief already picks the defaults).
- */
-export function prefillBriefOf(model: CatalogueModel, salesFunnelId: string): string | null {
-  const lines = [...runningPipesOf(model, salesFunnelId).values()].map((p) => channelSentenceOf(model, p));
-  return lines.length === 0 ? null : ["Use only these channels:", ...lines].join("\n");
-}
-
-/**
- * PURE: one pipe of the running funnel in one line of the prefilled brief: the CHANNEL it uses (so the pipe judge keeps the
- * campaign on its channels, owner relay 2026-10-29) and, when it runs a named strategy, that play (the play judge re-picks it).
- */
-export function channelSentenceOf(model: CatalogueModel, running: CataloguePipe): string {
-  const from = running.fromStep === null ? "Start" : stepLabel(model, running.fromStep);
-  const head = `Use ${running.channelName} (${from} to ${stepLabel(model, running.toStep)})`;
-  return withoutDashes(running.play ? `${head}: ${running.play.strategyName}. ${running.play.strategyDescription}` : `${head}.`);
-}
 
 // ── Monitoring: per org, per day ───────────────────────────────────────────────────────────────────
 
