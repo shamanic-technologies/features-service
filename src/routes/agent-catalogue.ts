@@ -1246,8 +1246,8 @@ router.get("/internal/catalogue/pipes/:id", apiKeyOnly, async (req, res) => {
 
 /**
  * One page of sales funnels. `forceRunnable` = the PUBLIC read (owner 2026-10-10, the signup's
- * "Your campaign" step): only what we can run today, and runnable implies published, so a draft or
- * a mixed funnel never reaches a signed-out visitor whatever the query says.
+ * "Your campaign" step): only what we can run today, and runnable implies published, so a draft never
+ * reaches a signed-out visitor whatever the query says (a mixed funnel does since ONE-CAMPAIGN-VOLUME-1122).
  */
 async function listSalesFunnels(req: Request, res: Response, forceRunnable: boolean): Promise<void> {
   try {
@@ -2331,15 +2331,13 @@ router.get("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
 /**
  * The sales funnels carrying a play (owner 2026-10-14): an agent that just catalogued a play reads the funnels it can
  * launch on it, runnable or not (the customer lists keep runnable funnels only, so a fresh play's funnels were nowhere
- * to read and an agent hand-built the id). Mixed funnels left out (never runnable). Best ROI first, at most `limit`.
+ * to read and an agent hand-built the id). Mixed funnels listed too (ONE-CAMPAIGN-VOLUME-1122). Best ROI first, at most `limit`.
  */
 async function funnelsCarrying(model: CatalogueModel, names: Map<string, string>, p: CataloguePipe, limit = 10) {
   const all = [...model.paths.values()]
     .filter((path) => path.legKeys.includes(p.legKey))
     .flatMap((path) => funnelsOfPath(model, path))
     .filter((f) => f.legs.some((l) => legPipes(l).some((x) => x.id === p.id)))
-    // A MIXED funnel is never runnable, whatever the play: never proposed.
-    .filter((f) => !funnelMixed(f))
     .sort(byRoi((f: CatalogueFunnel) => f.economics, (f) => f.id, (f) => funnelTypeOf(f)));
   const shown = all.slice(0, limit);
   const n = await named(shown.map((f) => f.id), names);

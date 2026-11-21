@@ -1354,8 +1354,8 @@ export const funnelTypeOf = (f: Pick<CatalogueFunnel, "legs"> & { headTriggerId?
 
 /**
  * PURE: a MIXED funnel (owner 2026-10-10): a proactive pipe AND a reactive pipe WE run (platform-operated,
- * e.g. AI meeting booking on a reply). The funnel's budget caps every pipe, so the reactive one can starve
- * the proactive part. A reactive pipe the customer's own team works spends nothing of ours: not a mix.
+ * e.g. AI meeting booking on a reply). A fact served on every funnel; it no longer makes a funnel not runnable
+ * (ONE-CAMPAIGN-VOLUME-1122, `funnelRunnable`). A reactive pipe the customer's own team works spends nothing of ours: not a mix.
  */
 // A pipe answering an INLINE trigger is not counted: a source answers the outreach run's request for a lead inside
 // that run and spends no budget of its own, so it cannot starve the proactive part.
@@ -1364,9 +1364,13 @@ export const funnelMixed = (f: Pick<CatalogueFunnel, "legs"> & { headTriggerId?:
   f.legs.some((l) => l.pipe?.mode === "proactive") &&
   f.legs.some((l) => l.pipe?.mode === "reactive" && l.pipe.operatedBy === "platform" && !answersInline(l.pipe));
 
-/** PURE: a funnel we can run today: one kind (never mixed), every leg worked by a runnable pipe. */
-export const funnelRunnable = (f: CatalogueFunnel): boolean =>
-  !funnelMixed(f) && f.legs.every((l) => legPipes(l).some(pipeRunnable));
+/**
+ * PURE: a funnel we can run today: every leg worked by a runnable pipe. A MIXED funnel runs too (ONE-CAMPAIGN-VOLUME-1122,
+ * owner 2026-11-22: « un grand texte unique de brief … ça sera à nous de splitter », one campaign, one cap; supersedes
+ * the 2026-10-10 « its budget would cap the reactive pipe with the proactive one »: billing caps the ONE campaign, a max
+ * budget and a max volume of its Target). `mixed` stays served as a fact.
+ */
+export const funnelRunnable = (f: CatalogueFunnel): boolean => f.legs.every((l) => legPipes(l).some(pipeRunnable));
 
 /** PURE: a channel we can run today: at least one of its pipes is runnable. */
 export const channelRunnable = (model: CatalogueModel, slug: string): boolean =>
