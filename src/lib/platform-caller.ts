@@ -56,3 +56,9 @@ export const ENGINE_STRATEGY_SUPPORT: PlatformSupport = {
   kind: "product_feature",
   reason: "features-service brief judge: keeps the strategy a campaign's brief asks for on one Engine, judged once per brief and stored, produces no outcome",
 };
+
+/** HUMAN-BRIEF-1121: writes a campaign's brief in plain words (onboarding prefill, rewrite of a robot-shaped brief we wrote). */
+export const HUMAN_BRIEF_SUPPORT: PlatformSupport = {
+  kind: "product_feature",
+  reason: "features-service brief writer: writes a campaign's brief in plain words from the offer and the channels the client chose, produces no outcome",
+};
