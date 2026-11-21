@@ -65,6 +65,18 @@ export const briefHashOf = (brief: string | null | undefined): string | null => 
 };
 
 /**
+ * PURE (HUMAN-BRIEF-1121): a stored verdict carried onto the human brief that replaced a robot-shaped brief our system
+ * wrote. The rewrite says the same thing in plain words, so every Engine keeps the strategy it kept (never re-asked on a
+ * rewording: a re-ask of the same meaning moved ~10% of verdicts by noise); a later edit by a person moves the hash and is
+ * judged as usual. An `empty_brief` row has no brief to carry (null = leave it).
+ */
+export function carriedOntoRewrite(row: Omit<StoredEngineStrategy, "judgedAt">, rewrittenBrief: string): Omit<StoredEngineStrategy, "judgedAt"> | null {
+  if (row.source === "empty_brief") return null;
+  return { ...row, source: "carried", briefHash: briefHashOf(rewrittenBrief), carriedFrom: HUMAN_BRIEF_REWRITE };
+}
+export const HUMAN_BRIEF_REWRITE = "human_brief_rewrite";
+
+/**
  * PURE: the strategies the judge chooses among for one Engine, no condition first, then by name. A strategy is the
  * Engine's when its script tactics keep some of the Engine's runnable scripts and rule some out, read on JUDGED facts
  * only: a script not yet judged on the strategy's tactics (a dynasty born minutes ago) is never counted as ruled out
