@@ -465,8 +465,10 @@ describe("the pipe judge reads every play a channel can run (MON-BRIEF-JUDGE-111
     expect(pipeSignatureOf(reworded, reworded.pipes.get(LS)!)).not.toBe(pipeSignatureOf(model, model.pipes.get(LS)!));
   });
 
-  it("v4: a play doing what the brief asks keeps the channel; another channel's job rules it out only when no play fits", () => {
-    expect(PIPE_JUDGE_RULE).toBe("channel-job-v4");
+  it("v5: a play doing what the brief asks keeps the channel; another channel's job rules it out only when no play fits", () => {
+    expect(PIPE_JUDGE_RULE).toBe("channel-job-v5");
+    // HUMAN-BRIEF-1121: no robot list format is taught to the judge any more.
+    expect(pipeQuestion("Lead Sourcing", "words").instructions).not.toContain("Use only these channels");
     const q = pipeQuestion("Lead Sourcing", "words");
     expect(q.instructions).toContain('when one of the plays of "Lead Sourcing" does what the brief asks');
     expect(q.instructions).toContain('none of the plays of "Lead Sourcing" does what the brief asks');

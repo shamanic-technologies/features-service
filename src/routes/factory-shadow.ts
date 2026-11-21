@@ -47,7 +47,6 @@ import {
   pipeVerdictCurrent,
   pipeWords,
   type PipeVerdict,
-  prefillBriefOf,
   planCampaign,
   playNameOf,
   playOptionsOf,
@@ -65,10 +64,13 @@ import {
 } from "../lib/factory-shadow.js";
 import { readDays, readJudgments, readOfferPlans, readPipeVerdicts, readPlan, readPlansSince, readPrefills, recordPrefill, writeDay, writeJudgment, writePipeVerdict, writePlan } from "../lib/factory-shadow-store.js";
 import { loadCatalogueModelForLifetimeRevenue } from "./agent-catalogue.js";
+import { composeHumanBrief, humanBriefInputOf, robotBriefSplit, stepLabelsOf, type RobotShape } from "../lib/human-brief.js";
+import { readOfferBriefContext, writeHumanBrief, type OfferBriefContext } from "../lib/human-brief-io.js";
 import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampaign, type EngineMemos, type ScriptRunResult, type UnpickedResult } from "../lib/engine-shadow-io.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsOnPipeOf } from "../lib/script-strategy.js";
-import { listEngineStrategies } from "../lib/engine-strategy-io.js";
+import { askJev as askEngineJev, labelOfOutcome, listEngineStrategies } from "../lib/engine-strategy-io.js";
+import { engineStrategyOptions, engineStrategyState } from "../lib/engine-strategy.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
 import { withEnginePickMarks, withFactoryEngineMarks } from "../lib/catalogue-mark-serving.js";
@@ -96,6 +98,8 @@ const REPLAY_EVERY_MS = 20 * 3_600_000;
 const EVAL_CELL = "factory-shadow:eval";
 /** Written when the brief backfill is APPLIED: from then on every pass prefills new live campaigns. */
 const PREFILL_CELL = "factory-shadow:prefill-backfill";
+/** Written when the human-brief rewrite was APPLIED (HUMAN-BRIEF-1121): from then on every pass rewrites a robot brief it meets. */
+const HUMAN_BRIEF_CELL = "factory-shadow:human-brief-backfill";
 
 // ── Reads ──────────────────────────────────────────────────────────────────────────────────────────
 
@@ -206,43 +210,74 @@ export interface PrefillRow {
   brandId: string;
   salesFunnelName: string;
   status: string;
-  /** `written` / `would_write` (dry run); `brief_stated` (never overwritten); `prefilled_before` (once per campaign, a
-   *  cleared brief stays cleared); `plain_defaults` (no pipe runs a named strategy: an empty brief already picks them);
-   *  `unreadable` (its funnel or offer could not be read). */
-  outcome: "written" | "would_write" | "rewritten" | "would_rewrite" | "brief_stated" | "prefilled_before" | "plain_defaults" | "unreadable" | "write_failed";
+  /** `written` / `would_write` (dry run): an empty brief given its first human brief; `rewritten` / `would_rewrite`: a
+   *  ROBOT-shaped brief our system wrote (HUMAN-BRIEF-1121), its robot lines replaced, any text after them kept word for
+   *  word; `robot_kept`: a robot brief a pass leaves until the human-brief backfill was applied; `brief_stated` (never
+   *  overwritten); `prefilled_before` (once per campaign, a cleared brief stays cleared); `unreadable` (its funnel, offer
+   *  or the writer could not be read). */
+  outcome: "written" | "would_write" | "rewritten" | "would_rewrite" | "robot_kept" | "brief_stated" | "prefilled_before" | "unreadable" | "write_failed";
+  /** The robot shape replaced, when one was. */
+  robotShape: RobotShape | null;
+  /** The brief before (only on a rewrite). */
+  previousBrief: string | null;
   brief: string | null;
   failure: string | null;
 }
 
-/** Prefill the brief of every campaign given whose brief is empty and was never prefilled. `apply: false` = dry run. */
-async function prefillBriefs(campaigns: ReadonlyArray<{ campaign: ShadowCampaign; status: string }>, apply: boolean, memos: ReturnType<typeof passMemos>): Promise<PrefillRow[]> {
+/**
+ * Prefill the brief of every campaign given whose brief is empty and was never prefilled, and (`rewriteRobot`) rewrite
+ * every robot-shaped brief our system wrote into a human one. `apply: false` = dry run. The writer's text for a dry run
+ * and its apply is the same (stored per input fingerprint, `human-brief-io`).
+ */
+async function prefillBriefs(
+  campaigns: ReadonlyArray<{ campaign: ShadowCampaign; status: string }>,
+  apply: boolean,
+  memos: ReturnType<typeof passMemos>,
+  opts: { rewriteRobot: boolean; campaignIds?: ReadonlySet<string> },
+): Promise<PrefillRow[]> {
   const done = await readPrefills();
-  return mapWithConcurrency(campaigns, CAMPAIGN_CONCURRENCY, async ({ campaign: c, status }) => {
-    const row: PrefillRow = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, salesFunnelName: c.salesFunnelName, status, outcome: "plain_defaults", brief: null, failure: null };
+  const contexts = new Map<string, Promise<OfferBriefContext>>();
+  const contextOf = (c: ShadowCampaign): Promise<{ offer: OfferBriefContext["offer"] | null; audiences: string[] }> => {
+    if (c.offerId === null) return Promise.resolve({ offer: null, audiences: [] });
+    const key = `${c.orgId}|${c.brandId}|${c.offerId}`;
+    if (!contexts.has(key)) contexts.set(key, readOfferBriefContext(c.orgId, c.brandId, c.offerId));
+    return contexts.get(key)!;
+  };
+  const scoped = opts.campaignIds ? campaigns.filter((x) => opts.campaignIds!.has(x.campaign.id)) : campaigns;
+  return mapWithConcurrency(scoped, CAMPAIGN_CONCURRENCY, async ({ campaign: c, status }) => {
+    const row: PrefillRow = { campaignId: c.id, orgId: c.orgId, brandId: c.brandId, salesFunnelName: c.salesFunnelName, status, outcome: "brief_stated", robotShape: null, previousBrief: null, brief: c.brief, failure: null };
     const ours = done.get(c.id);
-    // A brief someone stated is never touched; one WE wrote and nobody edited since follows what we write now.
-    const ourUnedited = ours !== undefined && briefHashOf(c.brief) !== null && c.brief!.trim() === ours.trim();
-    if (briefHashOf(c.brief) !== null && !ourUnedited) return { ...row, outcome: "brief_stated", brief: c.brief };
-    if (briefHashOf(c.brief) === null && ours !== undefined) return { ...row, outcome: "prefilled_before" };
-    let brief: string | null;
+    const empty = briefHashOf(c.brief) === null;
+    if (empty && ours !== undefined) return { ...row, outcome: "prefilled_before", brief: null };
+    let model: CatalogueModel;
     try {
-      // What the client CHOSE (the born funnel), never the plan it now runs: a brief composed from the plan's own funnel
-      // locks the plan in (API Email Meetings: the plan dropped AI Meeting Booking, the rewritten brief then dropped it too).
-      brief = prefillBriefOf((await memos.pricing(c)).model, c.bornSalesFunnelId ?? c.salesFunnelId);
+      model = (await memos.pricing(c)).model;
     } catch (error) {
       return { ...row, outcome: "unreadable", failure: failureOf(error) };
     }
-    if (brief === null) return row;
-    if (ourUnedited && brief.trim() === c.brief!.trim()) return { ...row, outcome: "prefilled_before", brief };
-    if (!apply) return { ...row, outcome: ourUnedited ? "would_rewrite" : "would_write", brief };
+    // A brief someone stated is never touched; only a ROBOT shape our system wrote is rewritten (its robot lines only).
+    const robot = empty ? null : robotBriefSplit(c.brief, stepLabelsOf(model));
+    if (!empty && !robot) return row;
+    if (robot && !opts.rewriteRobot) return { ...row, outcome: "robot_kept", robotShape: robot.shape };
+    let brief: string;
+    try {
+      // What the client CHOSE (the born funnel), never the plan it now runs: a brief composed from the plan's own funnel
+      // locks the plan in (API Email Meetings: the plan dropped AI Meeting Booking, the rewritten brief then dropped it too).
+      const input = humanBriefInputOf(model, await contextOf(c), { salesFunnelId: c.bornSalesFunnelId ?? c.salesFunnelId, target: c.target, replacing: robot?.robot ?? null });
+      brief = composeHumanBrief((await writeHumanBrief(input)).brief, robot?.rest ?? "");
+    } catch (error) {
+      return { ...row, outcome: "unreadable", robotShape: robot?.shape ?? null, failure: failureOf(error) };
+    }
+    const done_ = { ...row, robotShape: robot?.shape ?? null, previousBrief: robot ? c.brief : null, brief };
+    if (!apply) return { ...done_, outcome: robot ? "would_rewrite" : "would_write" };
     try {
       await patchBrief(c, brief);
       await recordPrefill({ campaignId: c.id, orgId: c.orgId, brief });
       c.brief = brief;
-      return { ...row, outcome: ourUnedited ? "rewritten" : "written", brief };
+      return { ...done_, outcome: robot ? "rewritten" : "written" };
     } catch (error) {
       console.error(`[features-service] factory brief prefill failed for campaign ${c.id}:`, error);
-      return { ...row, outcome: "write_failed", brief, failure: failureOf(error) };
+      return { ...done_, outcome: "write_failed", failure: failureOf(error) };
     }
   });
 }
@@ -499,7 +534,8 @@ export function runFactoryShadowPass(): Promise<PassRecord> {
     // A campaign born after the prefill gets its brief here, before it is judged (FACTORY-P1-BRIEF-PREFILL); only once the
     // backfill was APPLIED (dry run first, owner 2026-10-28): before that, a pass writes nothing.
     const backfilled = (await loadFleetCell(PREFILL_CELL)) !== null;
-    const prefilled = !backfilled ? [] : (await prefillBriefs(campaigns.map((campaign) => ({ campaign, status: "ongoing" })), true, memos)).filter((r) => r.outcome === "written" || r.outcome === "rewritten");
+    const rewriteRobot = (await loadFleetCell(HUMAN_BRIEF_CELL)) !== null;
+    const prefilled = !backfilled ? [] : (await prefillBriefs(campaigns.map((campaign) => ({ campaign, status: "ongoing" })), true, memos, { rewriteRobot })).filter((r) => r.outcome === "written" || r.outcome === "rewritten");
     if (prefilled.length > 0) console.log(`[features-service] factory brief prefill: ${prefilled.length} campaign(s) given the brief of what they run today`);
     const stored = await readJudgments(campaigns.map((c) => c.id));
     const storedPipes = await readPipeVerdicts(campaigns.map((c) => c.id));
@@ -1046,12 +1082,55 @@ router.post("/internal/factory-shadow/sweep", apiKeyOnly, (_req, res) => {
   res.status(202).json({ started: true });
 });
 
+/**
+ * HUMAN-BRIEF-1121 replay: on each rewritten brief, the strategy the Engine judge keeps per Engine the campaign holds a
+ * judged verdict on, asked on the robot text AND on the human text (same options, nothing stored): `same` when the human
+ * text keeps what the robot text keeps (the stored verdict is beside it, a re-ask of the same text can move by noise).
+ */
+export interface EngineReplayRow {
+  campaignId: string;
+  engines: Array<{ outcome: string; stored: string | null; onRobotText: string | null; onHumanText: string | null; humanConfidence: number | null; same: boolean }>;
+  failure: string | null;
+}
+
+async function replayEngineJudge(rows: readonly PrefillRow[]): Promise<EngineReplayRow[]> {
+  const targets = rows.filter((r) => r.previousBrief !== null && r.brief !== null);
+  if (targets.length === 0) return [];
+  const [scripts, catalogue] = await Promise.all([readRunnableScripts(), loadPlayCatalogue()]);
+  return mapWithConcurrency(targets, CAMPAIGN_CONCURRENCY, async (r): Promise<EngineReplayRow> => {
+    try {
+      const stored = (await listEngineStrategies(r.campaignId)).filter((s) => s.source !== "empty_brief");
+      const engines = await mapWithConcurrency(stored, 2, async (s) => {
+        const options = engineStrategyOptions(s.outcome, scripts, catalogue, s.strategyId ? [s.strategyId] : []);
+        if (options.length <= 1) {
+          const only = options[0]?.strategyId ?? null;
+          return { outcome: s.outcome, stored: s.strategyId, onRobotText: only, onHumanText: only, humanConfidence: 1, same: true };
+        }
+        const engine = { outcome: s.outcome, label: labelOfOutcome(s.outcome) };
+        const facts = { scripts, options, c: catalogue };
+        const [before, after] = await Promise.all([askEngineJev(engineStrategyState(r.previousBrief!, engine, facts), options), askEngineJev(engineStrategyState(r.brief!, engine, facts), options)]);
+        return { outcome: s.outcome, stored: s.strategyId, onRobotText: before.option.strategyId, onHumanText: after.option.strategyId, humanConfidence: after.confidence, same: before.option.strategyId === after.option.strategyId };
+      });
+      return { campaignId: r.campaignId, engines, failure: null };
+    } catch (error) {
+      return { campaignId: r.campaignId, engines: [], failure: failureOf(error) };
+    }
+  });
+}
+
 router.post("/internal/factory-shadow/prefill-briefs", apiKeyOnly, async (req, res) => {
   const apply = req.body?.apply === true;
+  // HUMAN-BRIEF-1121: robot briefs are rewritten unless the caller says not to; `replay` re-judges each rewrite's Engines.
+  const rewriteRobot = req.body?.rewriteRobot !== false;
+  const replay = req.body?.replay === true;
+  const ids = Array.isArray(req.body?.campaignIds) ? new Set((req.body.campaignIds as unknown[]).filter((x): x is string => typeof x === "string")) : undefined;
   try {
-    const rows = await prefillBriefs(await readFunnelCampaigns(), apply, passMemos());
+    const rows = await prefillBriefs(await readFunnelCampaigns(), apply, passMemos(), { rewriteRobot, campaignIds: ids });
     if (apply) await storeFleetCell(PREFILL_CELL, JSON.stringify({ appliedAt: new Date().toISOString(), written: rows.filter((r) => r.outcome === "written").length }), Date.now());
+    if (apply && rewriteRobot && !ids) await storeFleetCell(HUMAN_BRIEF_CELL, JSON.stringify({ appliedAt: new Date().toISOString(), rewritten: rows.filter((r) => r.outcome === "rewritten").length }), Date.now());
+    const engineReplay = replay ? await replayEngineJudge(rows) : null;
     const count = (o: PrefillRow["outcome"]) => rows.filter((r) => r.outcome === o).length;
+    const engines = (engineReplay ?? []).flatMap((r) => r.engines);
     res.json({
       apply,
       campaigns: rows.length,
@@ -1059,11 +1138,12 @@ router.post("/internal/factory-shadow/prefill-briefs", apiKeyOnly, async (req, r
       wouldWrite: count("would_write"),
       rewritten: count("rewritten"),
       wouldRewrite: count("would_rewrite"),
+      robotKept: count("robot_kept"),
       briefStated: count("brief_stated"),
       prefilledBefore: count("prefilled_before"),
-      plainDefaults: count("plain_defaults"),
       unreadable: count("unreadable"),
       writeFailed: count("write_failed"),
+      replay: engineReplay === null ? null : { engines: engines.length, same: engines.filter((e) => e.same).length, differ: engines.filter((e) => !e.same).length, failed: engineReplay.filter((r) => r.failure !== null).length, rows: engineReplay },
       rows,
     });
   } catch (error) {

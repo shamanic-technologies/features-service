@@ -10594,14 +10594,18 @@ registry.registerPath({
 registry.registerPath({
   method: "post",
   path: "/internal/factory-shadow/prefill-briefs",
-  summary: "Prefill the brief of every funnel campaign whose brief is empty with what it runs today (internal, api-key; dry run unless apply)",
+  summary: "Give every funnel campaign a human brief: prefill an empty one, rewrite a robot-shaped one our system wrote (internal, api-key; dry run unless apply)",
   description:
-    "FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28): every funnel campaign of every org, any status, whose brief is empty and was never prefilled gets " +
-    "one line per pipe of its running funnel that runs a named strategy, written from the strategy's description, through campaign-service's own PATCH " +
-    "as `system-features-service`. A stated brief is never overwritten; a campaign is prefilled once (a brief cleared afterwards stays empty). " +
-    "Body `{apply: true}` writes; anything else is a dry run. The 3-hour pass prefills new live campaigns the same way before judging them.",
+    "FACTORY-P1-BRIEF-PREFILL (owner 2026-10-28) + HUMAN-BRIEF-1121 (owner 2026-11-21: « Partout où tu as mis ça remplace par du langage humain »): every funnel " +
+    "campaign of every org, any status. An empty brief never prefilled gets one or two plain sentences (what it aims at, how, in the client's words) " +
+    "written by chat-service's platform complete from the offer and the funnel the client chose. A ROBOT-shaped brief our system wrote (« Use only these " +
+    "channels:\nUse X (A to B)… », « Goal: <step> for <offer>.\nUse only these channels: … ») has its robot lines replaced by that human text, any text " +
+    "after them kept word for word. Any other brief is never touched. Written through campaign-service's own PATCH as `system-features-service`. " +
+    "Body `{apply: true}` writes; anything else is a dry run (the same text is written on apply: stored per input). `rewriteRobot: false` leaves robot " +
+    "briefs; `campaignIds` narrows; `replay: true` asks the Engine brief judge, per Engine the campaign holds a judged verdict on, on the robot text AND the " +
+    "human text (nothing stored). The 3-hour pass does the same for live campaigns once a whole rewrite was applied.",
   tags: ["Internal"],
-  request: { body: { content: { "application/json": { schema: z.object({ apply: z.boolean().optional() }) } } } },
+  request: { body: { content: { "application/json": { schema: z.object({ apply: z.boolean().optional(), rewriteRobot: z.boolean().optional(), replay: z.boolean().optional(), campaignIds: z.array(z.string()).optional() }) } } } },
   responses: {
     200: {
       description: "One row per campaign with its outcome.",
@@ -10612,19 +10616,84 @@ registry.registerPath({
             campaigns: z.number().int(),
             written: z.number().int(),
             wouldWrite: z.number().int(),
-            rewritten: z.number().int().describe("Briefs WE wrote and nobody edited since, rewritten to what we write now."),
+            rewritten: z.number().int().describe("Robot-shaped briefs our system wrote, rewritten in plain words."),
             wouldRewrite: z.number().int(),
+            robotKept: z.number().int(),
             briefStated: z.number().int(),
             prefilledBefore: z.number().int(),
-            plainDefaults: z.number().int(),
             unreadable: z.number().int(),
             writeFailed: z.number().int(),
-            rows: z.array(z.object({ campaignId: z.string(), orgId: z.string(), brandId: z.string(), salesFunnelName: z.string(), status: z.string(), outcome: z.enum(["written", "would_write", "rewritten", "would_rewrite", "brief_stated", "prefilled_before", "plain_defaults", "unreadable", "write_failed"]), brief: z.string().nullable(), failure: z.string().nullable() })),
+            replay: z
+              .object({
+                engines: z.number().int(),
+                same: z.number().int(),
+                differ: z.number().int(),
+                failed: z.number().int(),
+                rows: z.array(
+                  z.object({
+                    campaignId: z.string(),
+                    engines: z.array(z.object({ outcome: z.string(), stored: z.string().nullable(), onRobotText: z.string().nullable(), onHumanText: z.string().nullable(), humanConfidence: z.number().nullable(), same: z.boolean() })),
+                    failure: z.string().nullable(),
+                  }),
+                ),
+              })
+              .nullable(),
+            rows: z.array(
+              z.object({
+                campaignId: z.string(),
+                orgId: z.string(),
+                brandId: z.string(),
+                salesFunnelName: z.string(),
+                status: z.string(),
+                outcome: z.enum(["written", "would_write", "rewritten", "would_rewrite", "robot_kept", "brief_stated", "prefilled_before", "unreadable", "write_failed"]),
+                robotShape: z.enum(["features_prefill", "campaign_service_birth"]).nullable(),
+                previousBrief: z.string().nullable(),
+                brief: z.string().nullable(),
+                failure: z.string().nullable(),
+              }),
+            ),
           }),
         },
       },
     },
     502: { description: "campaign-service unreadable", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/campaign-brief",
+  summary: "The brief a campaign would start with, in plain words, before it exists (onboarding prefill)",
+  description:
+    "HUMAN-BRIEF-1121 (owner 2026-11-21: « Prefill un résumé de sa campaign en langage naturel, court concis, clair. Qu'il peut cliquer pour éditer »). " +
+    "One or two short sentences: what the campaign aims at, in the client's words of value, and how in a few plain words (« by cold email »), never a list of " +
+    "channels, steps or strategies. Built from the offer (brand-service: name, description), who it is for (the offer's audiences) and what the card picked " +
+    "(`salesFunnelId`: its channels and any non-default play; `target`: the step it aims at, else the funnel's last). Written once per inputs by chat-service's " +
+    "platform complete and stored: the same inputs answer the same text. Org-scoped (x-org-id). The onboarding shows it editable and sends it as the campaign's brief.",
+  tags: ["Stats"],
+  request: {
+    params: z.object({ offerId: z.string() }),
+    query: z.object({ brandId: z.string(), salesFunnelId: z.string().optional(), target: z.string().optional() }),
+  },
+  responses: {
+    200: {
+      description: "The brief.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            offerId: z.string(),
+            brandId: z.string(),
+            salesFunnelId: z.string().nullable(),
+            target: z.string().nullable(),
+            brief: z.string().describe("One or two plain sentences, no line break, no dash."),
+            model: z.string().describe("The model release that wrote it."),
+          }),
+        },
+      },
+    },
+    400: { description: "brand_id_required | sales_funnel_unknown | target_unknown", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found | offer_not_found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "brief_unwritable (a producer or the writer could not answer)", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
