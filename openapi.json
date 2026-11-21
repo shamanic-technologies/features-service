@@ -36654,6 +36654,326 @@
           "repos"
         ]
       },
+      "SaasCashFigures": {
+        "type": "object",
+        "properties": {
+          "saasGrossCents": {
+            "type": "integer",
+            "description": "HEADLINE. SaaS gross cash: payments received, before refunds / lost disputes, agency and our own orgs excluded (whole cents)."
+          },
+          "saasGrossUsd": {
+            "type": "number"
+          },
+          "saasNetCents": {
+            "type": "integer",
+            "description": "SaaS net cash: SaaS gross minus the refunds / lost disputes that happened in the period. Always <= saasGrossCents."
+          },
+          "saasNetUsd": {
+            "type": "number"
+          },
+          "withAgencyGrossCents": {
+            "type": "integer",
+            "description": "Gross cash with agency: SaaS gross + agency orgs' gross. Our own orgs and unattributed money excluded."
+          },
+          "withAgencyGrossUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "saasGrossCents",
+          "saasGrossUsd",
+          "saasNetCents",
+          "saasNetUsd",
+          "withAgencyGrossCents",
+          "withAgencyGrossUsd"
+        ]
+      },
+      "SaasCash": {
+        "type": "object",
+        "properties": {
+          "computedAt": {
+            "type": "string"
+          },
+          "asOf": {
+            "type": "string",
+            "description": "The instant billing read the money as of."
+          },
+          "basis": {
+            "type": "object",
+            "properties": {
+              "gross": {
+                "type": "string"
+              },
+              "net": {
+                "type": "string"
+              },
+              "saas": {
+                "type": "string"
+              },
+              "withAgency": {
+                "type": "string"
+              },
+              "excluded": {
+                "type": "string"
+              },
+              "periods": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "gross",
+              "net",
+              "saas",
+              "withAgency",
+              "excluded",
+              "periods"
+            ]
+          },
+          "firstPaymentDay": {
+            "type": "string",
+            "nullable": true,
+            "description": "First UTC day any cash moved, fleet-wide; null = nobody ever paid."
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/SaasCashFigures"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "isoWeek": {
+                      "type": "string",
+                      "description": "ISO week, e.g. 2026-W47."
+                    },
+                    "weekStart": {
+                      "type": "string",
+                      "description": "Monday (UTC) the week starts on."
+                    },
+                    "isCurrent": {
+                      "type": "boolean",
+                      "description": "The week holding today (UTC): partial."
+                    }
+                  },
+                  "required": [
+                    "isoWeek",
+                    "weekStart",
+                    "isCurrent"
+                  ]
+                }
+              ]
+            },
+            "description": "One bar per ISO week since the first payment, every week listed (zeros included)."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string"
+                },
+                "cash": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SaasCashFigures"
+                    },
+                    {
+                      "description": "Cash collected that UTC day."
+                    }
+                  ]
+                },
+                "cumulative": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SaasCashFigures"
+                    },
+                    {
+                      "description": "Cash collected from the first payment up to and including that day."
+                    }
+                  ]
+                },
+                "isCurrent": {
+                  "type": "boolean",
+                  "description": "Today (UTC): partial."
+                }
+              },
+              "required": [
+                "day",
+                "cash",
+                "cumulative",
+                "isCurrent"
+              ]
+            },
+            "description": "One point per UTC day since the first payment, every day listed."
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "thisWeek": {
+                "$ref": "#/components/schemas/SaasCashFigures"
+              },
+              "sinceInception": {
+                "$ref": "#/components/schemas/SaasCashFigures"
+              }
+            },
+            "required": [
+              "thisWeek",
+              "sinceInception"
+            ]
+          },
+          "reconciliation": {
+            "type": "object",
+            "properties": {
+              "gross": {
+                "type": "object",
+                "properties": {
+                  "saasCents": {
+                    "type": "integer"
+                  },
+                  "agencyCents": {
+                    "type": "integer"
+                  },
+                  "ownOrgsCents": {
+                    "type": "integer"
+                  },
+                  "unattributedCents": {
+                    "type": "integer",
+                    "description": "Money billing attributes to no org."
+                  },
+                  "fleetCents": {
+                    "type": "integer",
+                    "description": "billing's fleet total since inception, every side."
+                  },
+                  "sidesTotalCents": {
+                    "type": "integer"
+                  },
+                  "differenceCents": {
+                    "type": "integer",
+                    "description": "fleet − Σ sides: the per-(org, day) whole-cent rounding residue."
+                  }
+                },
+                "required": [
+                  "saasCents",
+                  "agencyCents",
+                  "ownOrgsCents",
+                  "unattributedCents",
+                  "fleetCents",
+                  "sidesTotalCents",
+                  "differenceCents"
+                ]
+              },
+              "net": {
+                "type": "object",
+                "properties": {
+                  "saasCents": {
+                    "type": "integer"
+                  },
+                  "agencyCents": {
+                    "type": "integer"
+                  },
+                  "ownOrgsCents": {
+                    "type": "integer"
+                  },
+                  "unattributedCents": {
+                    "type": "integer",
+                    "description": "Money billing attributes to no org."
+                  },
+                  "fleetCents": {
+                    "type": "integer",
+                    "description": "billing's fleet total since inception, every side."
+                  },
+                  "sidesTotalCents": {
+                    "type": "integer"
+                  },
+                  "differenceCents": {
+                    "type": "integer",
+                    "description": "fleet − Σ sides: the per-(org, day) whole-cent rounding residue."
+                  }
+                },
+                "required": [
+                  "saasCents",
+                  "agencyCents",
+                  "ownOrgsCents",
+                  "unattributedCents",
+                  "fleetCents",
+                  "sidesTotalCents",
+                  "differenceCents"
+                ]
+              }
+            },
+            "required": [
+              "gross",
+              "net"
+            ],
+            "description": "SaaS + agency + own orgs + unattributed vs billing's fleet totals, since inception."
+          },
+          "excludedOrgs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orgId": {
+                  "type": "string"
+                },
+                "orgName": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "side": {
+                  "type": "string",
+                  "enum": [
+                    "agency",
+                    "own_org"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "grossCents": {
+                  "type": "integer"
+                },
+                "netCents": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "orgId",
+                "orgName",
+                "side",
+                "reason",
+                "grossCents",
+                "netCents"
+              ]
+            }
+          },
+          "saasOrgsWithoutVerdict": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paying orgs billing's own-org read carries no verdict for: counted as SaaS, named."
+          },
+          "payingSaasOrgs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "computedAt",
+          "asOf",
+          "basis",
+          "firstPaymentDay",
+          "weeks",
+          "days",
+          "totals",
+          "reconciliation",
+          "excludedOrgs",
+          "saasOrgsWithoutVerdict",
+          "payingSaasOrgs"
+        ]
+      },
       "ClientFinancialRow": {
         "type": "object",
         "properties": {
@@ -76689,6 +77009,63 @@
           },
           "401": {
             "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/saas-cash": {
+      "get": {
+        "summary": "Cash the distribute.you SaaS collected: weekly bars + daily cumulative, gross (headline), net, and gross with agency (internal, api-key)",
+        "description": "Owner 2026-11-21 (SAAS-CASH-1121): cash collected, never consumed spend. Three series over the same ISO weeks and UTC days since the first payment: SaaS GROSS (headline: payments received before refunds / lost disputes, agency and our own orgs excluded), SaaS NET (after refunds / lost disputes on the day they happened), GROSS WITH AGENCY (SaaS + agency orgs). From billing's cash per org per UTC day; agency = orgs with stated monthly amounts; own orgs = billing's verdict. Held 5 min, refreshed behind up to 1 h. api-key only; staff-gated at api-service (`/v1/features/audit/saas-cash`).",
+        "tags": [
+          "Internal"
+        ],
+        "responses": {
+          "200": {
+            "description": "The three series, totals and the reconciliation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaasCash"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "billing or the stated amounts store unreadable (`saas_cash_unavailable`).",
             "content": {
               "application/json": {
                 "schema": {
