@@ -158,13 +158,27 @@ export const stepLabelsOf = (model: CatalogueModel): Set<string> => new Set([...
 export function humanBriefInputOf(
   model: CatalogueModel,
   context: { offer: { name: string; description: string | null } | null; audiences: string[] },
-  campaign: { salesFunnelId: string | null; target: string | null; replacing: string | null },
+  campaign: { salesFunnelId: string | null; target: string | null; replacing: string | null; salesFunnelIds?: readonly string[] },
 ): HumanBriefInput {
+  // ONE-CAMPAIGN-VOLUME-1122 (owner 2026-11-22: « un grand texte unique de brief qui fasse l'union des deux »): ONE campaign
+  // runs several funnels underneath; its brief says the UNION of what they do, each channel once, in the funnels' order.
+  const ids = campaign.salesFunnelIds && campaign.salesFunnelIds.length > 0 ? campaign.salesFunnelIds : null;
   return {
     offer: context.offer,
     audiences: context.audiences,
-    targetLabel: briefTargetLabelOf(model, campaign.target, campaign.salesFunnelId),
-    channels: briefChannelsOf(model, campaign.salesFunnelId),
+    targetLabel: briefTargetLabelOf(model, campaign.target, ids ? ids[ids.length - 1]! : campaign.salesFunnelId),
+    channels: ids ? briefChannelsOfMany(model, ids) : briefChannelsOf(model, campaign.salesFunnelId),
     replacing: campaign.replacing,
   };
+}
+
+/** PURE: the channels of several funnels, in order, each (channel, leg, play) said once. */
+export function briefChannelsOfMany(model: CatalogueModel, salesFunnelIds: readonly string[]): BriefChannel[] {
+  const seen = new Set<string>();
+  return salesFunnelIds.flatMap((id) => briefChannelsOf(model, id)).filter((c) => {
+    const key = `${c.name}|${c.fromLabel}|${c.toLabel}|${c.play?.name ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

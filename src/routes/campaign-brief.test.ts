@@ -49,18 +49,33 @@ mem.model = buildCatalogueModel({
 const app = express().use(express.json()).use(router);
 const ORG = { "x-api-key": "test-key", "x-org-id": "11111111-1111-4111-8111-111111111111", "x-user-id": "22222222-2222-4222-8222-222222222222", "x-run-id": "33333333-3333-4333-8333-333333333333" };
 const FUNNEL = "start_to_lead_found@lead-sourcing+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client";
+const REACTIVE = "conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
 
 describe("GET /offers/:offerId/campaign-brief", () => {
   it("answers one short human brief per funnel card, built from the offer and the funnel's channels", async () => {
     const res = await request(app).get(`/offers/offer-1/campaign-brief?brandId=brand-1&salesFunnelId=${encodeURIComponent(FUNNEL)}`).set(ORG);
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ offerId: "offer-1", brandId: "brand-1", salesFunnelId: FUNNEL, target: null, brief: "Book meetings with HR leaders at mid-size companies by cold email.", model: "claude-sonnet-test" });
+    expect(res.body).toEqual({ offerId: "offer-1", brandId: "brand-1", salesFunnelId: FUNNEL, salesFunnelIds: [], target: null, brief: "Book meetings with HR leaders at mid-size companies by cold email.", model: "claude-sonnet-test" });
     expect(res.body.brief).not.toContain("Use only these channels");
     expect(res.body.brief).not.toContain("\n");
     const input = mem.inputs.at(-1);
     expect(input.offer.name).toBe("Payroll audit");
     expect(input.channels.map((c: any) => c.name)).toContain("Sales Cold Email Outreach");
     expect(input.replacing).toBeNull();
+  });
+
+  it("ONE campaign over several funnels: one brief, the union of their channels, each once, aimed at the Target (ONE-CAMPAIGN-VOLUME-1122)", async () => {
+    const ids = [FUNNEL, REACTIVE].join(",");
+    const res = await request(app).get(`/offers/offer-1/campaign-brief?brandId=brand-1&salesFunnelIds=${encodeURIComponent(ids)}&target=meeting_booked`).set(ORG);
+    expect(res.status).toBe(200);
+    expect(res.body.salesFunnelIds).toEqual([FUNNEL, REACTIVE]);
+    const input = mem.inputs.at(-1);
+    const names = input.channels.map((c: any) => c.name);
+    expect(names).toContain("Sales Cold Email Outreach");
+    expect(names).toContain("AI Meeting Booking");
+    expect(new Set(input.channels.map((c: any) => `${c.name}|${c.fromLabel}|${c.toLabel}`)).size).toBe(input.channels.length);
+    expect(input.targetLabel).toBe("Meeting booked");
+    expect((await request(app).get(`/offers/offer-1/campaign-brief?brandId=b&salesFunnelIds=${encodeURIComponent(`${FUNNEL},nope`)}`).set(ORG)).body.reason).toBe("sales_funnel_unknown");
   });
 
   it("refuses what it cannot answer for, by name", async () => {

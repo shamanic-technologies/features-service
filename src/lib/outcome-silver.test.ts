@@ -467,5 +467,5 @@ describe("ONE mechanism: no code path keyed on an outcome, a channel or an Engin
 });
 
 function SILVER_AND_GOLD_FILES(): string[] {
-  return ["./outcome-silver.ts", "./outcome-silver-io.ts", "../routes/outcome-distributions.ts", "./outcome-forecast.ts", "../routes/outcome-forecast.ts", "./campaign-change-log.ts", "./campaign-change-log-io.ts", "../routes/campaign-changes.ts"];
+  return ["./outcome-silver.ts", "./outcome-silver-io.ts", "../routes/outcome-distributions.ts", "./outcome-forecast.ts", "../routes/outcome-forecast.ts", "./campaign-change-log.ts", "./campaign-change-log-io.ts", "../routes/campaign-changes.ts", "./target-volume-estimate.ts"];
 }

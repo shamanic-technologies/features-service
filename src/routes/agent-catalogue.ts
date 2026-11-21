@@ -421,6 +421,16 @@ async function offerContextOf(req: Request): Promise<OfferContext | null> {
   const orgId = typeof req.headers["x-org-id"] === "string" ? req.headers["x-org-id"] : null;
   if (!brandId) throw new BadQuery("brand_required", "a per-offer read (offerId) also names its brandId");
   if (!orgId) throw new BadQuery("org_required", "a per-offer read needs the x-org-id header (the offer's org)");
+  const header = (k: string) => (typeof req.headers[k] === "string" ? (req.headers[k] as string) : undefined);
+  return offerContextFor(offerId, brandId, { orgId, userId: header("x-user-id"), runId: header("x-run-id") });
+}
+
+/**
+ * The per-offer context (lifetime revenue, the brand's own leg rates, the offer's steps) of one offer of one brand, for
+ * the org asking. Throws `DeclarationError(404, "offer_not_found")` when the brand lists no such offer.
+ */
+export async function offerContextFor(offerId: string, brandId: string, ids: { orgId: string; userId?: string; runId?: string }): Promise<OfferContext> {
+  const orgId = ids.orgId;
   const legEconomics = await fetchBrandLegEconomics(brandId, orgId);
   const offer = legEconomics.offers.find((o) => o.offerId === offerId);
   if (!offer) throw new DeclarationError(404, "offer_not_found", `offer ${offerId} is not an offer of brand ${brandId}`);
@@ -428,12 +438,11 @@ async function offerContextOf(req: Request): Promise<OfferContext | null> {
   const teamLegs = (await loadChannelCatalogue({ publishedOnly: false })).channels
     .filter((c) => c.operatedBy === "customer")
     .flatMap((c) => c.stepTransitions.filter((t) => t.from !== null).map((t) => ({ fromStep: t.from!.key, toStep: t.to.key })));
-  const header = (k: string) => (typeof req.headers[k] === "string" ? (req.headers[k] as string) : undefined);
   const [ltr, effective, teamRates, steps] = await Promise.all([
     offerLifetimeRevenue(offer.lifetimeRevenueUsd),
     getBrandEffectiveRates(brandId, orgId, legEconomics),
     fetchTeamCrmLegRates(orgId, brandId, teamLegs),
-    fetchOfferSteps(brandId, offerId, { orgId, userId: header("x-user-id"), runId: header("x-run-id") }),
+    fetchOfferSteps(brandId, offerId, { orgId, userId: ids.userId, runId: ids.runId }),
   ]);
   const rates = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>();
   for (const r of effective.legs) {

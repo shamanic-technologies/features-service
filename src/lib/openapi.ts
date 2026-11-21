@@ -10673,7 +10673,15 @@ registry.registerPath({
   tags: ["Stats"],
   request: {
     params: z.object({ offerId: z.string() }),
-    query: z.object({ brandId: z.string(), salesFunnelId: z.string().optional(), target: z.string().optional() }),
+    query: z.object({
+      brandId: z.string(),
+      salesFunnelId: z.string().optional(),
+      salesFunnelIds: z
+        .string()
+        .optional()
+        .describe("ONE-CAMPAIGN-VOLUME-1122: the funnels ONE campaign runs underneath, comma separated: the brief says their union (each channel once), aimed at `target`."),
+      target: z.string().optional(),
+    }),
   },
   responses: {
     200: {
@@ -10684,6 +10692,7 @@ registry.registerPath({
             offerId: z.string(),
             brandId: z.string(),
             salesFunnelId: z.string().nullable(),
+            salesFunnelIds: z.array(z.string()).describe("The funnels the brief unites ([] = none named)."),
             target: z.string().nullable(),
             brief: z.string().describe("One or two plain sentences, no line break, no dash."),
             model: z.string().describe("The model release that wrote it."),
@@ -10694,6 +10703,79 @@ registry.registerPath({
     400: { description: "brand_id_required | sales_funnel_unknown | target_unknown", content: { "application/json": { schema: errorResponse } } },
     404: { description: "brand_not_found | offer_not_found", content: { "application/json": { schema: errorResponse } } },
     502: { description: "brief_unwritable (a producer or the writer could not answer)", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+const volumeEstimateBudget = z.object({
+  period: z.enum(["day", "week", "month"]),
+  lowUsd: z.number().nullable().describe("Whole dollars per period: volume × the 20th percentile cost of one Unit of the Target (rounded down)."),
+  highUsd: z.number().nullable().describe("Whole dollars per period: volume × the 80th percentile cost (rounded up)."),
+  maxUsd: z.number().nullable().describe("The campaign's own max budget per period = the top of the range (owner decision 2026-11-22)."),
+  unavailableReason: z.string().nullable(),
+});
+const volumeEstimateTiming = z.object({
+  firstUnitsWeek: z.number().nullable().describe("The week after launch (1 = the first 7 days) by which the first Unit of the Target is expected (cumulative expected ≥ 1). Null = later than 26 weeks."),
+  steadyFromWeek: z.number().nullable().describe("The week the weekly pace reaches 80% of the wanted volume. Null = later than 26 weeks."),
+  steadyPerPeriod: z.number().describe("The pace once steady: the wanted volume per period."),
+  weeks: z.array(z.object({ week: z.number(), expectedUnits: z.number() })).describe("Expected Units of the Target per week after launch, at a steady spend from day one."),
+  unavailableReason: z.string().nullable(),
+});
+registry.registerPath({
+  method: "get",
+  path: "/offers/{offerId}/target-volume-estimate",
+  summary: "Before a campaign exists: budget range (20th-80th percentile) and timing for a wanted volume of its Target",
+  description:
+    "ONE-CAMPAIGN-VOLUME-1122 (owner 2026-11-22: « Ils veulent juste un volume d'outcome par jour / week ou mois, avec le budget range associé sur un intervalle 20-80% »). " +
+    "For this brand × offer, the Target the ONE campaign aims at, and the funnels it will run underneath (`salesFunnelIds`, comma separated): " +
+    "`perUnit` = what ONE Unit of the Target costs from Start, everything the campaign spends to make it, as the 20th and 80th percentiles of posterior draws " +
+    "(MULTIPLY BY A VOLUME for its budget range: served for exactly that, so the dashboard can move the range as the visitor types without asking again); " +
+    "with `volume` (+ `period`, default week): `budget` (the range per period, whole dollars, and the campaign's max = the top) and `timing` (when the first Units land and when the pace is steady). " +
+    "Hypotheses = the running campaign forecast's (OUTCOME-FORECAST-1117) with no campaign level: per transition the yield and delay blended brand measured > fleet measured > the offer's plan line " +
+    "(catalogue rates: brand measured > stated > fleet measured > default) > default; the cost of one first-milestone Unit ALL IN (the brand's sales funnel campaigns, else the fleet's, else the plan line's own). " +
+    "`basis` = the weakest hypothesis (`measured` = this brand's own; `fleet`; `stated`; `default`), `isExpected` unless every hypothesis is this brand's own: an expected cost, never a promise. " +
+    "Org-scoped (x-org-id; the anonymous signup org reads it through the gateway like the other /offers reads). Never blank: null + `unavailableReason`.",
+  tags: ["Stats"],
+  request: {
+    params: z.object({ offerId: z.string() }),
+    query: z.object({
+      brandId: z.string(),
+      salesFunnelIds: z.string().describe("The funnels the campaign runs underneath, comma separated (the signup's cards)."),
+      target: z.string().describe("The catalogue step the campaign aims at (e.g. the meeting booked step)."),
+      volume: z.string().optional().describe("Wanted Units of the Target per period (number > 0)."),
+      period: z.enum(["day", "week", "month"]).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "The estimate.",
+      content: {
+        "application/json": {
+          schema: z.object({
+            offerId: z.string(),
+            brandId: z.string(),
+            salesFunnelIds: z.array(z.string()),
+            target: z.object({ step: z.string(), label: z.string() }),
+            basis: z.enum(["measured", "stated", "fleet", "default"]).nullable(),
+            isExpected: z.boolean(),
+            unavailableReason: z.string().nullable(),
+            perUnit: z
+              .object({ lowUsd: z.number(), highUsd: z.number(), medianUsd: z.number() })
+              .nullable()
+              .describe("USD per ONE Unit of the Target from Start: 20th percentile, 80th percentile, median. Multiply by a volume for its budget range."),
+            volume: z.object({ volume: z.number(), period: z.enum(["day", "week", "month"]) }).nullable(),
+            budget: volumeEstimateBudget.nullable(),
+            timing: volumeEstimateTiming.nullable(),
+            rampShareByWeek: z.array(z.number()).nullable().describe("Share of the steady pace reached in each week after launch (26 weeks): expected Units in week w = weekly volume × share."),
+            hypotheses: z.record(z.string(), z.unknown()).nullable().describe("Every hypothesis named: milestones, entry cost (source, basis, $ per Unit), each transition's yield and delay with their source and evidence, the plan line."),
+            silverComputedAt: z.string().nullable(),
+            rule: z.string(),
+          }),
+        },
+      },
+    },
+    400: { description: "brand_id_required | target_required | sales_funnel_ids_required | volume_unrecognised | period_unrecognised | sales_funnel_unknown | target_unknown", content: { "application/json": { schema: errorResponse } } },
+    404: { description: "brand_not_found | offer_not_found", content: { "application/json": { schema: errorResponse } } },
+    502: { description: "estimate_unreadable", content: { "application/json": { schema: errorResponse } } },
   },
 });
 
