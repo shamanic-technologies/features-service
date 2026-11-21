@@ -68,6 +68,7 @@ describe("the human brief's shape", () => {
     });
     expect(systemPrompt).toContain("one or two short sentences");
     expect(systemPrompt).toContain("by cold email");
+    expect(systemPrompt).toContain("At most 30 words");
     expect(message).toContain("Payroll audit");
     expect(message).toContain("HR leaders at mid-size companies");
     expect(message).toContain("Sends only to confirmed addresses.");
