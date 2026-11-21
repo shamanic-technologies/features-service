@@ -341,7 +341,7 @@ export function rngOf(seed: number): () => number {
   };
 }
 
-const quantileOf = (sorted: ArrayLike<number>, q: number): number => {
+export const quantileOf = (sorted: ArrayLike<number>, q: number): number => {
   const i = (sorted.length - 1) * q;
   const lo = Math.floor(i);
   const hi = Math.ceil(i);
@@ -501,7 +501,8 @@ const convolve = (flow: Float64Array, lag: readonly number[]): Float64Array => {
   return out;
 };
 
-function gammaDraw(shape: number, rng: () => number): number {
+/** PURE. One draw of Gamma(shape, 1) (Marsaglia-Tsang): divide by the rate for Gamma(shape, rate). */
+export function gammaDraw(shape: number, rng: () => number): number {
   if (shape < 1) return gammaDraw(shape + 1, rng) * Math.pow(Math.max(rng(), 1e-300), 1 / shape);
   const d = shape - 1 / 3;
   const c = 1 / Math.sqrt(9 * d);
@@ -720,7 +721,7 @@ export interface CampaignForecastInput {
 }
 
 const band = (shape: number, rate: number) => ({ mean: shape / rate, median: gammaQuantile(0.5, shape, rate), p10: gammaQuantile(0.1, shape, rate), p90: gammaQuantile(0.9, shape, rate) });
-const seedOf = (s: string) => {
+export const seedOf = (s: string) => {
   let h = 2166136261;
   for (let k = 0; k < s.length; k++) h = Math.imul(h ^ s.charCodeAt(k), 16777619);
   return h >>> 0;
