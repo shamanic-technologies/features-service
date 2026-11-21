@@ -11,18 +11,22 @@ describe("parseFleetCashByDay", () => {
         as_of: "2026-11-21T10:00:00Z",
         total_gross_cents: "1200.5",
         total_net_cents: "1000",
+        total_agency_gross_cents: "125000",
+        total_agency_net_cents: "125000",
         rows: [
-          { org_id: "o1", day: "2026-11-20", gross_cents: "1200.5", net_cents: "1200.5" },
-          { org_id: null, day: "2026-11-21", gross_cents: "0", net_cents: "-200.5" },
+          { org_id: "o1", day: "2026-11-20", gross_cents: "1200.5", net_cents: "1200.5", agency_gross_cents: "0", agency_net_cents: "0" },
+          { org_id: null, day: "2026-11-21", gross_cents: "0", net_cents: "-200.5", agency_gross_cents: "125000", agency_net_cents: "125000" },
         ],
       }),
     ).toEqual({
       asOf: "2026-11-21T10:00:00Z",
       totalGrossCents: "1200.5",
       totalNetCents: "1000",
+      totalAgencyGrossCents: "125000",
+      totalAgencyNetCents: "125000",
       rows: [
-        { orgId: "o1", day: "2026-11-20", grossCents: "1200.5", netCents: "1200.5" },
-        { orgId: null, day: "2026-11-21", grossCents: "0", netCents: "-200.5" },
+        { orgId: "o1", day: "2026-11-20", grossCents: "1200.5", netCents: "1200.5", agencyGrossCents: "0", agencyNetCents: "0" },
+        { orgId: null, day: "2026-11-21", grossCents: "0", netCents: "-200.5", agencyGrossCents: "125000", agencyNetCents: "125000" },
       ],
     });
   });
@@ -36,7 +40,9 @@ describe("parseFleetCashByDay", () => {
         as_of: "x",
         total_gross_cents: "1",
         total_net_cents: "1",
-        rows: [{ org_id: "o", day: "2026-11-20", net_cents: "1" }],
+        total_agency_gross_cents: "0",
+        total_agency_net_cents: "0",
+        rows: [{ org_id: "o", day: "2026-11-20", net_cents: "1", agency_gross_cents: "0", agency_net_cents: "0" }],
       }),
     ).toThrow(/gross_cents/);
   });

@@ -36684,7 +36684,7 @@
           },
           "withAgencyGrossCents": {
             "type": "integer",
-            "description": "Gross cash with agency: SaaS gross + agency orgs' gross. Our own orgs and unattributed money excluded."
+            "description": "Gross cash with agency: SaaS gross + agency orgs' gross + agency money received outside the product (payment requests staff send by hand). Our own orgs and org-less SaaS money excluded."
           },
           "withAgencyGrossUsd": {
             "type": "number"
@@ -36913,11 +36913,42 @@
                   "sidesTotalCents",
                   "differenceCents"
                 ]
+              },
+              "agencyOutsideProduct": {
+                "type": "object",
+                "properties": {
+                  "grossCents": {
+                    "type": "integer"
+                  },
+                  "netCents": {
+                    "type": "integer"
+                  },
+                  "billingGrossCents": {
+                    "type": "integer",
+                    "description": "billing's total of agency money received outside the product."
+                  },
+                  "billingNetCents": {
+                    "type": "integer"
+                  },
+                  "differenceCents": {
+                    "type": "integer",
+                    "description": "billing − Σ rows: the whole-cent rounding residue."
+                  }
+                },
+                "required": [
+                  "grossCents",
+                  "netCents",
+                  "billingGrossCents",
+                  "billingNetCents",
+                  "differenceCents"
+                ],
+                "description": "Agency money received outside the product: in no fleet total, only in the with-agency series."
               }
             },
             "required": [
               "gross",
-              "net"
+              "net",
+              "agencyOutsideProduct"
             ],
             "description": "SaaS + agency + own orgs + unattributed vs billing's fleet totals, since inception."
           },
