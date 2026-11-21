@@ -83549,6 +83549,16 @@
           },
           {
             "schema": {
+              "type": "string",
+              "description": "ONE-CAMPAIGN-VOLUME-1122: the funnels ONE campaign runs underneath, comma separated: the brief says their union (each channel once), aimed at `target`."
+            },
+            "required": false,
+            "description": "ONE-CAMPAIGN-VOLUME-1122: the funnels ONE campaign runs underneath, comma separated: the brief says their union (each channel once), aimed at `target`.",
+            "name": "salesFunnelIds",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string"
             },
             "required": false,
@@ -83574,6 +83584,13 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "salesFunnelIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The funnels the brief unites ([] = none named)."
+                    },
                     "target": {
                       "type": "string",
                       "nullable": true
@@ -83591,6 +83608,7 @@
                     "offerId",
                     "brandId",
                     "salesFunnelId",
+                    "salesFunnelIds",
                     "target",
                     "brief",
                     "model"
@@ -83637,6 +83655,361 @@
           },
           "502": {
             "description": "brief_unwritable (a producer or the writer could not answer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/offers/{offerId}/target-volume-estimate": {
+      "get": {
+        "summary": "Before a campaign exists: budget range (20th-80th percentile) and timing for a wanted volume of its Target",
+        "description": "ONE-CAMPAIGN-VOLUME-1122 (owner 2026-11-22: « Ils veulent juste un volume d'outcome par jour / week ou mois, avec le budget range associé sur un intervalle 20-80% »). For this brand × offer, the Target the ONE campaign aims at, and the funnels it will run underneath (`salesFunnelIds`, comma separated): `perUnit` = what ONE Unit of the Target costs from Start, everything the campaign spends to make it, as the 20th and 80th percentiles of posterior draws (MULTIPLY BY A VOLUME for its budget range: served for exactly that, so the dashboard can move the range as the visitor types without asking again); with `volume` (+ `period`, default week): `budget` (the range per period, whole dollars, and the campaign's max = the top) and `timing` (when the first Units land and when the pace is steady). Hypotheses = the running campaign forecast's (OUTCOME-FORECAST-1117) with no campaign level: per transition the yield and delay blended brand measured > fleet measured > the offer's plan line (catalogue rates: brand measured > stated > fleet measured > default) > default; the cost of one first-milestone Unit ALL IN (the brand's sales funnel campaigns, else the fleet's, else the plan line's own). `basis` = the weakest hypothesis (`measured` = this brand's own; `fleet`; `stated`; `default`), `isExpected` unless every hypothesis is this brand's own: an expected cost, never a promise. Org-scoped (x-org-id; the anonymous signup org reads it through the gateway like the other /offers reads). Never blank: null + `unavailableReason`.",
+        "tags": [
+          "Stats"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "offerId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "brandId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The funnels the campaign runs underneath, comma separated (the signup's cards)."
+            },
+            "required": true,
+            "description": "The funnels the campaign runs underneath, comma separated (the signup's cards).",
+            "name": "salesFunnelIds",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The catalogue step the campaign aims at (e.g. the meeting booked step)."
+            },
+            "required": true,
+            "description": "The catalogue step the campaign aims at (e.g. the meeting booked step).",
+            "name": "target",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Wanted Units of the Target per period (number > 0)."
+            },
+            "required": false,
+            "description": "Wanted Units of the Target per period (number > 0).",
+            "name": "volume",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month"
+              ]
+            },
+            "required": false,
+            "name": "period",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The estimate.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "offerId": {
+                      "type": "string"
+                    },
+                    "brandId": {
+                      "type": "string"
+                    },
+                    "salesFunnelIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "target": {
+                      "type": "object",
+                      "properties": {
+                        "step": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "step",
+                        "label"
+                      ]
+                    },
+                    "basis": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "measured",
+                        "stated",
+                        "fleet",
+                        "default",
+                        null
+                      ]
+                    },
+                    "isExpected": {
+                      "type": "boolean"
+                    },
+                    "unavailableReason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "perUnit": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "lowUsd": {
+                          "type": "number"
+                        },
+                        "highUsd": {
+                          "type": "number"
+                        },
+                        "medianUsd": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "lowUsd",
+                        "highUsd",
+                        "medianUsd"
+                      ],
+                      "description": "USD per ONE Unit of the Target from Start: 20th percentile, 80th percentile, median. Multiply by a volume for its budget range."
+                    },
+                    "volume": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "volume": {
+                          "type": "number"
+                        },
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "day",
+                            "week",
+                            "month"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "volume",
+                        "period"
+                      ]
+                    },
+                    "budget": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "period": {
+                          "type": "string",
+                          "enum": [
+                            "day",
+                            "week",
+                            "month"
+                          ]
+                        },
+                        "lowUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Whole dollars per period: volume × the 20th percentile cost of one Unit of the Target (rounded down)."
+                        },
+                        "highUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Whole dollars per period: volume × the 80th percentile cost (rounded up)."
+                        },
+                        "maxUsd": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The campaign's own max budget per period = the top of the range (owner decision 2026-11-22)."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "period",
+                        "lowUsd",
+                        "highUsd",
+                        "maxUsd",
+                        "unavailableReason"
+                      ]
+                    },
+                    "timing": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "firstUnitsWeek": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The week after launch (1 = the first 7 days) by which the first Unit of the Target is expected (cumulative expected ≥ 1). Null = later than 26 weeks."
+                        },
+                        "steadyFromWeek": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "The week the weekly pace reaches 80% of the wanted volume. Null = later than 26 weeks."
+                        },
+                        "steadyPerPeriod": {
+                          "type": "number",
+                          "description": "The pace once steady: the wanted volume per period."
+                        },
+                        "weeks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "week": {
+                                "type": "number"
+                              },
+                              "expectedUnits": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "week",
+                              "expectedUnits"
+                            ]
+                          },
+                          "description": "Expected Units of the Target per week after launch, at a steady spend from day one."
+                        },
+                        "unavailableReason": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "firstUnitsWeek",
+                        "steadyFromWeek",
+                        "steadyPerPeriod",
+                        "weeks",
+                        "unavailableReason"
+                      ]
+                    },
+                    "rampShareByWeek": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "number"
+                      },
+                      "description": "Share of the steady pace reached in each week after launch (26 weeks): expected Units in week w = weekly volume × share."
+                    },
+                    "hypotheses": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": {
+                        "nullable": true
+                      },
+                      "description": "Every hypothesis named: milestones, entry cost (source, basis, $ per Unit), each transition's yield and delay with their source and evidence, the plan line."
+                    },
+                    "silverComputedAt": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "rule": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "offerId",
+                    "brandId",
+                    "salesFunnelIds",
+                    "target",
+                    "basis",
+                    "isExpected",
+                    "unavailableReason",
+                    "perUnit",
+                    "volume",
+                    "budget",
+                    "timing",
+                    "rampShareByWeek",
+                    "hypotheses",
+                    "silverComputedAt",
+                    "rule"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "brand_id_required | target_required | sales_funnel_ids_required | volume_unrecognised | period_unrecognised | sales_funnel_unknown | target_unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "brand_not_found | offer_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "estimate_unreadable",
             "content": {
               "application/json": {
                 "schema": {
