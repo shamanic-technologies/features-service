@@ -29,6 +29,20 @@ describe("scriptWorksPipe", () => {
   });
 });
 
+// ONE-CAMPAIGN-VOLUME-1122: a pipe may NAME its own `to` step as its Engine outcome (the staff PUT no longer refuses it):
+// a script stating no channel then works it (AI Meeting Booking's leg to Meeting booked + the Book a meeting script).
+describe("a pipe naming its own to step", () => {
+  it("is worked by that Engine's scripts stating no channel, unnamed it is not", () => {
+    const named = { channelSlug: "ai-meeting-booking", outcome: "meeting_booked", outcomeStated: true };
+    const unnamed = { ...named, outcomeStated: false };
+    const script = { outcome: "meeting_booked", tactics: { asks: ["message_sent"], relationships: "pure_prospect" } };
+    expect(scriptWorksPipe(script, named)).toBe(true);
+    expect(scriptWorksPipe(script, unnamed)).toBe(false);
+    const of = engineOutcomeLookup([{ channelSlug: "ai-meeting-booking", legKey: "conversation_to_meeting_booked", outcome: "meeting_booked" }]);
+    expect(of("ai-meeting-booking", "conversation_to_meeting_booked")).toBe("meeting_booked");
+  });
+});
+
 describe("engineOutcomeLookup", () => {
   it("reads a stated outcome under either outbound leg spelling, null elsewhere", () => {
     const of = engineOutcomeLookup([{ channelSlug: "sales-cold-email-outreach", legKey: "start_to_conversation", outcome: "email_sequence_sent" }]);

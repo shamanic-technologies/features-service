@@ -2444,8 +2444,10 @@ router.post("/internal/catalogue/plays", apiKeyOnly, async (req, res) => {
  * STAFF (MIGRATE-1105 S5, owner 2026-11-06: the outcome is the WHAT, as fine as possible): the outcome this pipe's ENGINE
  * makes (`{outcome, decidedBy}`), a step of the catalogue finer than the leg's `to` step (Threads post published on the
  * Threads leg to Post published). Every campaign of the pipe then runs that Engine, among that outcome's scripts
- * (campaign-service reads `/public/channels` `stepTransitions[].outcome`). Stating the `to` step itself is refused: no row
- * already means that. DELETE drops the statement (the Engine is the `to` step again).
+ * (campaign-service reads `/public/channels` `stepTransitions[].outcome`). The `to` step itself may be stated too
+ * (ONE-CAMPAIGN-VOLUME-1122, 2026-11-22): the Engine makes the same outcome, and the pipe now NAMES it, so a script of that
+ * Engine stating no channel works the pipe (`scriptWorksPipe`: AI Meeting Booking's leg to Meeting booked and the Book a
+ * meeting script, never runnable before). DELETE drops the statement (the Engine is the `to` step, unnamed, again).
  */
 router.put("/internal/catalogue/pipes/:pipeId/outcome", apiKeyOnly, async (req, res) => {
   const body = (req.body ?? {}) as Body;
@@ -2457,7 +2459,6 @@ router.put("/internal/catalogue/pipes/:pipeId/outcome", apiKeyOnly, async (req, 
     const pipe = model.pipes.get(pipeId);
     if (!pipe) throw new DeclarationError(404, "pipe_not_found", `no pipe ${pipeId}`);
     if (!model.steps.has(outcome)) throw new DeclarationError(404, "outcome_not_found", `no outcome ${outcome} in the catalogue (GET /internal/catalogue/steps; declare it first)`);
-    if (outcome === pipe.toStep) throw bad("outcome_is_to_step", `${outcome} is the leg's own step: the pipe's Engine already makes it (DELETE to drop a stated outcome)`);
     await setPipeEngineOutcome(pipe.channelSlug, pipe.computedLegKey, outcome, decidedBy);
     invalidateChannelCatalogue();
     const after = (await loadModel()).model.pipes.get(pipeId);
