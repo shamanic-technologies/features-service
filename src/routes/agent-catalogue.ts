@@ -2532,7 +2532,7 @@ router.get("/public/catalogue/steps", async (_req, res) => {
     ]);
     const publishedPipeIds = new Set(pub.channels.flatMap((c) => c.stepTransitions.map((t) => pipeIdOf(c.slug, servedPipeLegKey(c.slug, t.legKey)))));
     const model = buildCatalogueModel({ channels: all.channels, publishedPipeIds, declaredSteps, outcomeRungs, measurements: new Map(), lifetimeRevenueUsd: null });
-    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, ...lifecycleWire(s) }));
+    const rows = [...model.steps.values()].sort((a, b) => a.key.localeCompare(b.key)).map((s) => ({ key: s.key, name: s.label, pluralName: pluralLabelOf(s.label), icon: s.icon, ...lifecycleWire(s), towardStep: s.towardStep }));
     res.set("Cache-Control", "public, max-age=300").json({ object: "step", total: rows.length, lifecycleLadder: servedLifecycleLadder(), rows });
   } catch (err) {
     fail(res, err, "list public steps");
