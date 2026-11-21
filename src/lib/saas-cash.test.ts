@@ -9,15 +9,25 @@ const verdicts = new Map<string, OrgVerdict>([
 ]);
 const agency = new Set(["agency", "ours"]);
 
-type Row = [string | null, string, string, string]; // org, day, gross, net
+// org, day, gross, net, [agency gross outside the product, agency net outside the product]
+type Row = [string | null, string, string, string, string?, string?];
 
-function body(rows: Row[], totalGross: string, totalNet: string, now = "2026-11-21T10:00:00Z") {
+function body(rows: Row[], totalGross: string, totalNet: string, now = "2026-11-21T10:00:00Z", agencyTotals: [string, string] = ["0", "0"]) {
   return computeSaasCash({
     cash: {
       asOf: now,
       totalGrossCents: totalGross,
       totalNetCents: totalNet,
-      rows: rows.map(([orgId, day, grossCents, netCents]) => ({ orgId, day, grossCents, netCents })),
+      totalAgencyGrossCents: agencyTotals[0],
+      totalAgencyNetCents: agencyTotals[1],
+      rows: rows.map(([orgId, day, grossCents, netCents, agencyGrossCents = "0", agencyNetCents = "0"]) => ({
+        orgId,
+        day,
+        grossCents,
+        netCents,
+        agencyGrossCents,
+        agencyNetCents,
+      })),
     },
     agencyOrgIds: agency,
     verdicts,
@@ -120,6 +130,33 @@ describe("computeSaasCash", () => {
     );
     expect(withAgency.weeks.map((w) => [w.saasGrossCents, w.saasNetCents])).toEqual(base.weeks.map((w) => [w.saasGrossCents, w.saasNetCents]));
     expect(withAgency.totals.sinceInception.withAgencyGrossCents).toBe(1000999);
+  });
+
+  it("agency money received outside the product counts only in the with-agency series, on its own day", () => {
+    const x = body(
+      [
+        ["saas-a", "2026-11-17", "1000", "1000"],
+        [null, "2026-11-18", "0", "0", "200000", "200000"], // a payment request staff sent by hand, no org
+        ["agency", "2026-11-19", "500", "500", "1250", "1250"],
+      ],
+      "1500",
+      "1500",
+      "2026-11-21T10:00:00Z",
+      ["201250", "201250"],
+    );
+    expect(x.totals.sinceInception).toMatchObject({ saasGrossCents: 1000, saasNetCents: 1000, withAgencyGrossCents: 1000 + 500 + 201250 });
+    expect(x.days.find((d) => d.day === "2026-11-18")!.cash).toMatchObject({ saasGrossCents: 0, withAgencyGrossCents: 200000 });
+    expect(x.reconciliation.gross).toMatchObject({ saasCents: 1000, agencyCents: 500, unattributedCents: 0, fleetCents: 1500, differenceCents: 0 });
+    expect(x.reconciliation.agencyOutsideProduct).toEqual({
+      grossCents: 201250,
+      netCents: 201250,
+      billingGrossCents: 201250,
+      billingNetCents: 201250,
+      differenceCents: 0,
+    });
+    const last = x.days[x.days.length - 1];
+    expect(last.cumulative.withAgencyGrossCents).toBe(x.weeks.reduce((s, w) => s + w.withAgencyGrossCents, 0));
+    expect(() => body([[null, "2026-11-18", "0", "0", "10", "11"]], "0", "0", "2026-11-21T10:00:00Z", ["10", "11"])).toThrow(/agency net/);
   });
 
   it("an org without a verdict counts as SaaS and is named", () => {

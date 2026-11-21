@@ -9263,7 +9263,7 @@ const saasCashFigures = registry.register(
     saasGrossUsd: z.number(),
     saasNetCents: z.number().int().describe("SaaS net cash: SaaS gross minus the refunds / lost disputes that happened in the period. Always <= saasGrossCents."),
     saasNetUsd: z.number(),
-    withAgencyGrossCents: z.number().int().describe("Gross cash with agency: SaaS gross + agency orgs' gross. Our own orgs and unattributed money excluded."),
+    withAgencyGrossCents: z.number().int().describe("Gross cash with agency: SaaS gross + agency orgs' gross + agency money received outside the product (payment requests staff send by hand). Our own orgs and org-less SaaS money excluded."),
     withAgencyGrossUsd: z.number(),
   }),
 );
@@ -9314,7 +9314,19 @@ const saasCashView = registry.register(
       sinceInception: saasCashFigures,
     }),
     reconciliation: z
-      .object({ gross: saasCashSides, net: saasCashSides })
+      .object({
+        gross: saasCashSides,
+        net: saasCashSides,
+        agencyOutsideProduct: z
+          .object({
+            grossCents: z.number().int(),
+            netCents: z.number().int(),
+            billingGrossCents: z.number().int().describe("billing's total of agency money received outside the product."),
+            billingNetCents: z.number().int(),
+            differenceCents: z.number().int().describe("billing − Σ rows: the whole-cent rounding residue."),
+          })
+          .describe("Agency money received outside the product: in no fleet total, only in the with-agency series."),
+      })
       .describe("SaaS + agency + own orgs + unattributed vs billing's fleet totals, since inception."),
     excludedOrgs: z.array(
       z.object({
