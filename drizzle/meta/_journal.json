@@ -582,6 +582,13 @@
       "when": 1796140800000,
       "tag": "0082_tactic_opt_in",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1796227200000,
+      "tag": "0083_pipe_verdict_named",
+      "breakpoints": true
     }
   ]
 }
