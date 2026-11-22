@@ -63389,6 +63389,16 @@
             "description": "The offer's brand (required with offerId).",
             "name": "brandId",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked."
+            },
+            "required": false,
+            "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.",
+            "name": "target",
+            "in": "query"
           }
         ],
         "responses": {
@@ -63590,6 +63600,24 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "checkedBefore": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "description": "Step key."
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "description": "The Target the read named (`?target=`): only the steps before it were checked. Null = every step."
+                        },
                         "alwaysPresent": {
                           "type": "array",
                           "items": {
@@ -63615,6 +63643,7 @@
                         "stated",
                         "steps",
                         "statedAt",
+                        "checkedBefore",
                         "alwaysPresent"
                       ],
                       "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
@@ -64051,6 +64080,16 @@
             "description": "The offer's brand (required with offerId).",
             "name": "brandId",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked."
+            },
+            "required": false,
+            "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.",
+            "name": "target",
+            "in": "query"
           }
         ],
         "responses": {
@@ -64343,6 +64382,24 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "checkedBefore": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "description": "Step key."
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "description": "The Target the read named (`?target=`): only the steps before it were checked. Null = every step."
+                        },
                         "alwaysPresent": {
                           "type": "array",
                           "items": {
@@ -64368,6 +64425,7 @@
                         "stated",
                         "steps",
                         "statedAt",
+                        "checkedBefore",
                         "alwaysPresent"
                       ],
                       "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
@@ -68218,6 +68276,16 @@
             "description": "The offer's brand (required with offerId).",
             "name": "brandId",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked."
+            },
+            "required": false,
+            "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.",
+            "name": "target",
+            "in": "query"
           }
         ],
         "responses": {
@@ -68486,6 +68554,24 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "checkedBefore": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "description": "Step key."
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "description": "The Target the read named (`?target=`): only the steps before it were checked. Null = every step."
+                        },
                         "alwaysPresent": {
                           "type": "array",
                           "items": {
@@ -68511,6 +68597,7 @@
                         "stated",
                         "steps",
                         "statedAt",
+                        "checkedBefore",
                         "alwaysPresent"
                       ],
                       "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."
@@ -69808,6 +69895,16 @@
             "description": "The offer's brand (required with offerId).",
             "name": "brandId",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked."
+            },
+            "required": false,
+            "description": "Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.",
+            "name": "target",
+            "in": "query"
           }
         ],
         "responses": {
@@ -70377,6 +70474,24 @@
                           "type": "string",
                           "nullable": true
                         },
+                        "checkedBefore": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "description": "Step key."
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "description": "The Target the read named (`?target=`): only the steps before it were checked. Null = every step."
+                        },
                         "alwaysPresent": {
                           "type": "array",
                           "items": {
@@ -70402,6 +70517,7 @@
                         "stated",
                         "steps",
                         "statedAt",
+                        "checkedBefore",
                         "alwaysPresent"
                       ],
                       "description": "Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has."

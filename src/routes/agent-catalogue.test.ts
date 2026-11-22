@@ -376,6 +376,46 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect(down.body.reason).toBe("offer_steps_unreadable");
   });
 
+  it("a campaign aimed at a Target needs only the steps before it: the signup's meetings-booked campaign runs for an offer stating no meeting (GS-STEP11-NO-CAMPAIGN-1122)", async () => {
+    const H = { ...KEY, "x-org-id": "o1" };
+    // saasdocs.online's assessed statement (prod 2026-11-22): a signup business, no meeting step.
+    offerSteps.value = {
+      stated: true,
+      steps: ["company_researched", "conversation", "email_found", "email_reply_received", "email_sent", "google_search_click", "lead_found", "lead_identified", "lead_interested", "lead_visited", "message_sent", "message_written", "reply_received", "signup", "website_visit"],
+      statedAt: "2026-11-22T05:50:00.000Z",
+    };
+    // The dashboard's own query (containsChannels + q), without and with the campaign's Target.
+    const Q = { offerId: "offer-1", brandId: "b1", limit: 25, containsChannels: "ai-meeting-booking", q: "start_to_lead_found@lead-sourcing conversation_to_meeting_booked@ai-meeting-booking" };
+    const before = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
+    expect(before.total).toBe(0);
+    expect(before.setAside.rows.find((r: { name: string }) => r.name === "Victory").missingSteps.map((m: { id: string }) => m.id)).toEqual(["meeting_booked", "meeting_attended"]);
+    expect(before.offerSteps.checkedBefore).toBeNull();
+
+    const aimed = (await request(app).get("/internal/catalogue/sales-funnels").query({ ...Q, target: "meeting_booked" }).set(H)).body;
+    const victory = aimed.rows.find((r: { name: string }) => r.name === "Victory");
+    expect(victory).toBeDefined();
+    expect(victory.id).toMatch(/^start_to_lead_found@lead-sourcing\+lead_found_to_conversation@sales-cold-email-outreach\+conversation_to_meeting_booked@ai-meeting-booking/);
+    expect(victory.runnable).toBe(true);
+    expect(aimed.offerSteps.checkedBefore).toEqual({ id: "meeting_booked", name: expect.any(String) });
+    // Detail agrees.
+    const detail = (await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory.id)}`).query({ offerId: "offer-1", brandId: "b1", target: "meeting_booked" }).set(H)).body;
+    expect(detail).toMatchObject({ setAside: false, missingSteps: [] });
+    // Same rule on paths.
+    const paths = (await request(app).get("/internal/catalogue/sales-paths").query({ offerId: "offer-1", brandId: "b1", limit: 25, target: "meeting_booked" }).set(H)).body;
+    expect(paths.rows.some((r: { id: string }) => r.id.includes("conversation_to_meeting_booked"))).toBe(true);
+
+    // Doc Dinners (2026-10-12) stays: a step BEFORE the Target is still a precondition, so a purchase funnel aimed at Paid client stays aside.
+    offerSteps.value = { stated: true, steps: ["conversation", "booking_call", "meeting_booked", "meeting_attended", "website_visit"], statedAt: "2026-10-08T00:00:00.000Z" };
+    const purchases = (await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1", brandId: "b1", limit: 25, q: "website_visit_to_purchase", target: "paid_client" }).set(H)).body;
+    expect(purchases.total).toBe(0);
+    expect(purchases.setAside.rows[0].missingSteps).toContainEqual({ id: "purchase", name: "Direct purchase" });
+
+    // An unknown Target is refused by name.
+    const bad = await request(app).get("/internal/catalogue/sales-funnels").query({ ...Q, target: "nope" }).set(H);
+    expect(bad.status).toBe(400);
+    expect(bad.body.reason).toBe("target_unknown");
+  });
+
   it("a funnel serves no customer sentence (withdrawn 2026-10-11); a reactive one names its trigger", async () => {
     const list = (await request(app).get("/internal/catalogue/sales-funnels").query({ limit: 25 }).set(KEY)).body;
     for (const r of list.rows) expect(r).not.toHaveProperty("description");
