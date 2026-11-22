@@ -91,7 +91,7 @@ vi.stubGlobal(
         // The pipe judge: a brief saying "No Apollo" rules the Apollo pipes out, nothing else.
         mem.pipeCalls += 1;
         if (mem.jevFails) return new Response("out of credits", { status: 502 });
-        const answers = Object.fromEntries(Object.entries(body.questions).map(([k, q]: [string, any]) => [k, { type: "noul", noul: body.state.brief.includes("No Apollo") && q.instructions.includes("Apollo") ? 0.95 : 0.05 }]));
+        const answers = Object.fromEntries(Object.entries(body.questions).map(([k, q]: [string, any]) => [k, { type: "noul", noul: !q.instructions.includes("Apollo") ? 0.05 : k.startsWith("p") ? (body.state.brief.includes("No Apollo") ? 0.95 : 0.05) : body.state.brief.includes("Name Apollo") ? 0.9 : 0.05 }]));
         return new Response(JSON.stringify({ model: "jev-test", answers }), { status: 200 });
       }
       mem.jevCalls += 1;
@@ -236,6 +236,14 @@ describe("a pass: judged once, reused, re-judged when the brief moves", () => {
     const calls = mem.pipeCalls;
     await runFactoryShadowPass();
     expect(mem.pipeCalls).toBe(calls);
+  });
+
+  it("a pipe the brief NAMES is never ruled out, even when the judge's two answers disagree (MON-PLAN-FOLLOWING-1122)", async () => {
+    mem.campaigns = [{ ...campaign("No Apollo. Name Apollo."), id: "sfc-8" }];
+    await runFactoryShadowPass();
+    const body = mem.plans.get("sfc-8").body;
+    expect(body.pipeVerdicts.find((v: any) => v.pipeId === "sourcing-apollo-cold-filters|start_to_lead_found")).toMatchObject({ excluded: false, named: true, namedProbability: 0.9, probability: 0.95 });
+    expect(body.plan.briefNamedChannels).toContain("sourcing-apollo-cold-filters");
   });
 
   it("a brief is judged by Jev once, then the stored verdict is reused", async () => {
