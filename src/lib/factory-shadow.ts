@@ -248,9 +248,15 @@ export interface ShadowPlan {
   candidatesPriced: number;
   /** Chains left out: a step the offer lacks, or a line carrying fewer of the brief's named channels than another. */
   candidatesSetAside: number;
-  /** The channels the brief names (kept by the pipe judge on a brief that rules channels out); every plan line carries as
-   *  many of them as any line can. [] when the brief restricts no channel. */
+  /** The channels the brief NAMES (the pipe judge's second question, MON-PLAN-FOLLOWING-1122): every plan line carries as
+   *  many of them as any line can. [] when the brief names none. */
   briefNamedChannels?: string[];
+  /** The pipes (base ids, `<channel>|<leg>`) of the funnel the campaign was LAUNCHED on whose channel the brief names: every
+   *  plan keeps them when a line can (`launchedNamedPipesKept`). campaign-service never drains a unit of one of them. */
+  launchedNamedPipes?: string[];
+  /** Did the plan keep every launched named pipe? false = no runnable line to the Target can (the plan then contradicts the
+   *  brief, red at campaign-service); null when there is no shadow line. */
+  launchedNamedPipesKept?: boolean | null;
 }
 
 /** Stops a pathological catalogue from spinning a sweep (straight lines priced per campaign). */
@@ -488,7 +494,7 @@ export function frameOf(model: CatalogueModel, campaign: Pick<ShadowCampaign, "s
  */
 export function planCampaign(
   model: CatalogueModel,
-  campaign: Pick<ShadowCampaign, "salesFunnelId" | "target" | "mode" | "triggerId">,
+  campaign: Pick<ShadowCampaign, "salesFunnelId" | "target" | "mode" | "triggerId" | "bornSalesFunnelId">,
   picks: ReadonlyMap<string, string>,
   offerSteps: OfferStepStatement,
   ltrBasis: ExpectedBasis,
@@ -510,6 +516,8 @@ export function planCampaign(
   // priced up to the Target (FACTORY-P1: the plan names a funnel campaign-service can run, never a line the catalogue
   // does not serve: an undeclared trigger head read `unknown_sales_funnel` there).
   const byLine = new Map<string, PlanLine>();
+  /** Base pipe ids each line walks to the Target (a play counts as its pipe). */
+  const pipesByLine = new Map<string, Set<string>>();
   let setAside = 0;
   let budget = MAX_LINES_PER_CAMPAIGN;
   const allowedByPick = (p: CataloguePipe | null): boolean => {
@@ -534,17 +542,33 @@ export function planCampaign(
       const line = lineOf(model, f.legs.slice(0, cut + 1), target, ltrBasis, f.headTriggerId, f.id);
       // Funnels sharing the line to the Target differ only after it: one stands for them (the running one, else the first).
       const kept = byLine.get(line.lineId);
-      if (!kept || (kept.funnelId !== running.id && (f.id === running.id || f.id < kept.funnelId))) byLine.set(line.lineId, line);
+      if (!kept || (kept.funnelId !== running.id && (f.id === running.id || f.id < kept.funnelId))) {
+        byLine.set(line.lineId, line);
+        pipesByLine.set(line.lineId, new Set(f.legs.slice(0, cut + 1).flatMap((l) => (l.pipe ? [basePipeIdOf(l.pipe)] : []))));
+      }
     }
   }
   // A channel the brief NAMES stays in the plan (owner 2026-10-29: "Use only these channels: Email Sending ... AI Meeting
   // Booking" read Email Sending -> Your Team Reply Closing, dropping AI Meeting Booking through a leg the client's own team
   // works, which no brief judge rules out): only the lines carrying the MOST named channels compete.
+  // First the pipes the campaign was LAUNCHED on whose channel the brief names (MON-PLAN-FOLLOWING-1122): the brief was
+  // written for them, so a line leaving one out is set aside whenever another line keeps them all. Prod 2026-11-22: a
+  // Threads campaign whose brief ends « Cold email pitching the offer only » was planned through cold email (two named
+  // channels beat one) and campaign-service kept the Threads unit running beside a stale plan, red for days.
+  const launched = campaign.bornSalesFunnelId ?? campaign.salesFunnelId;
+  const launchedNamed = funnelById(model, launched)
+    ? [...runningPipesOf(model, launched).values()].map(basePipeIdOf).filter((id) => {
+        const slug = model.pipes.get(id)?.channelSlug;
+        return !!slug && namedChannels.has(slug);
+      })
+    : [];
+  const keepsLaunched = (l: PlanLine) => launchedNamed.every((id) => pipesByLine.get(l.lineId)?.has(id) === true);
+  const every = [...byLine.values()];
+  const all = every.some(keepsLaunched) ? every.filter(keepsLaunched) : every;
   const coverage = (l: PlanLine) => new Set(l.legs.map((g) => g.channelSlug).filter((c): c is string => c !== null && namedChannels.has(c))).size;
-  const all = [...byLine.values()];
   const most = all.reduce((m, l) => Math.max(m, coverage(l)), 0);
   const lines = all.filter((l) => coverage(l) === most);
-  setAside += all.length - lines.length;
+  setAside += every.length - lines.length;
   // A valued Target: the best ROI. An unvalued one (after Paid client): the cheapest per Target.
   const rankedOn: ShadowPlan["rankedOn"] = model.steps.get(target)?.valueUsd == null ? "cost_per_target" : "roi";
   lines.sort(rankedOn === "roi" ? byBestLine : byCheapestLine);
@@ -598,6 +622,8 @@ export function planCampaign(
     candidatesPriced: lines.length,
     candidatesSetAside: setAside,
     briefNamedChannels: [...namedChannels].sort(),
+    launchedNamedPipes: [...new Set(launchedNamed)].sort(),
+    launchedNamedPipesKept: shadow ? keepsLaunched(shadow) : null,
   };
 }
 
@@ -666,14 +692,13 @@ export function pipeCandidatesOf(model: CatalogueModel, campaign: Pick<ShadowCam
 }
 
 /**
- * PURE: the channels a brief NAMES, read off the pipe judge: when the brief rules at least one channel out, it lists the
- * channels to use, so every channel it KEPT (Jev, p < 0.5) is named. A brief that rules nothing out names none (its
- * kept pipes are every pipe: requiring them all would pick the line with the most channels).
+ * PURE: the channels a brief NAMES: the pipe judge's second question (MON-PLAN-FOLLOWING-1122, `pipeNamedQuestion`), p >= 0.5
+ * on any pipe of the channel. Supersedes « every channel kept on a brief that rules one out »: a pipe the brief is silent on
+ * is kept too, so the line through the most kept channels won (Lead Sourcing + Cold Email over Threads posts alone).
  */
-export function briefNamedChannels(model: CatalogueModel, verdicts: ReadonlyArray<{ pipeId: string; excluded: boolean | null; source: string | null }>): Set<string> {
-  if (!verdicts.some((v) => v.excluded === true)) return new Set();
+export function briefNamedChannels(model: CatalogueModel, verdicts: ReadonlyArray<{ pipeId: string; named?: boolean | null }>): Set<string> {
   const out = new Set<string>();
-  for (const v of verdicts) if (v.excluded === false && v.source === "jev") {
+  for (const v of verdicts) if (v.named === true) {
     const slug = model.pipes.get(v.pipeId)?.channelSlug;
     if (slug) out.add(slug);
   }
@@ -697,7 +722,7 @@ export function pipeWords(model: CatalogueModel, p: CataloguePipe): string {
 }
 
 /** The pipe judge's rule version: bumped when the question changes, so every stored verdict is asked again. */
-export const PIPE_JUDGE_RULE = "channel-job-v5";
+export const PIPE_JUDGE_RULE = "channel-job-v6";
 
 /** PURE: a fingerprint of what Jev judged a pipe on: its words or the question's rule move it (a re-judge). */
 export const pipeSignatureOf = (model: CatalogueModel, p: CataloguePipe): string => sha256(`${PIPE_JUDGE_RULE}|${pipeWords(model, p)}`);
@@ -708,9 +733,11 @@ export interface PipeVerdict {
   pipeId: string;
   briefHash: string;
   pipeSignature: string;
-  /** The brief rules the pipe out (Jev p >= 0.5). */
+  /** The brief rules the pipe out (Jev p >= 0.5, and the brief does not name it). */
   excluded: boolean;
   probability: number;
+  /** Jev's p that the brief NAMES the pipe's channel as one to use (`pipeNamedQuestion`); null on a verdict stored before v6. */
+  namedProbability: number | null;
   model: string;
   judgedAt: string;
 }
@@ -725,6 +752,9 @@ export const pipeVerdictCurrent = (v: Pick<PipeVerdict, "briefHash" | "pipeSigna
  * job rules it out only when none of its plays fits; the keep reasons come first. Replay on the 790 verdicts of 31 live
  * briefs: every « Use only these channels » brief unchanged (349 verdicts), Lead Sourcing kept on Past Email Replies.
  * v5 (HUMAN-BRIEF-1121): briefs are plain words now (« by cold email »), never a channel list; the rule-out example says so.
+ * v6 (MON-PLAN-FOLLOWING-1122): a sentence that only sets how a channel works or what it says (« Cold email pitching the
+ * offer only », in 28 of 31 live briefs) is a rule for that channel, never a list of channels to use: v5 read it as « only by
+ * cold email » and ruled Founder Hello out of a brief asking for « an introductory message from the founder » (p 0.74 -> 0.32).
  */
 export function pipeQuestion(channelName: string, words: string) {
   return {
@@ -738,10 +768,32 @@ export function pipeQuestion(channelName: string, words: string) {
       `Answer yes only when the brief says to use only some channels (for example "only by cold email" or "only on LinkedIn") and "${channelName}" is not one of them nor does its job a different way; ` +
       `or when the brief asks for another channel to do the same job as "${channelName}" (the same move between the same two steps: for example it asks for emails to get replies and "${channelName}" gets replies another way), none of the plays of "${channelName}" does what the brief asks, and it never asks for "${channelName}"; ` +
       `or when the brief says not to use "${channelName}". ` +
-      "A channel asked for one job never rules out a channel doing another job: emails that get replies say nothing about the channels that find the people. Judge on the brief's words only.",
+      "A channel asked for one job never rules out a channel doing another job: emails that get replies say nothing about the channels that find the people. " +
+      `A sentence that only says how a channel works or what it says when it runs (for example "Cold email pitching the offer only": the cold emails, if any, pitch only the offer) is a rule for that channel, never a list of channels to use: it rules no channel out, "${channelName}" included. ` +
+      "Judge on the brief's words only.",
     criteria: {
       true: `The brief lists other channels and not "${channelName}", asks for another channel to do its job, or says not to use it.`,
       false: `The brief names "${channelName}", one of its plays does what the brief asks, or the brief asks for no channel to do its job.`,
+    },
+  };
+}
+
+/**
+ * PURE: the pipe judge's second question (MON-PLAN-FOLLOWING-1122): does the brief NAME this channel as one to use? Yes =
+ * the channel stays in the plan on its leg (`briefNamedChannels`), and a pipe the brief names is never ruled out. Replay
+ * 2026-11-22 on the three red campaigns: Threads posts 0.97, AI Follow-up Email 0.96, Founder Hello 0.64 named; Sales Cold
+ * Email Outreach 0.14 on the Threads brief (v5's kept-channel rule had named it).
+ */
+export function pipeNamedQuestion(channelName: string, words: string) {
+  return {
+    type: "noul" as const,
+    instructions:
+      `A client wrote a BRIEF for one sales campaign (in the state). Does the brief explicitly ask us to USE the channel "${channelName}"? About this channel: ${words} ` +
+      `Answer yes when the brief names "${channelName}" (by its name or an unmistakable description of what it does, for example "through Threads posts", "an introductory message from the founder", "AI follow-up emails") as a way to reach people. ` +
+      `Answer no when the brief only allows it, says nothing about it, excludes it, or only sets a rule on how it works or what it says if it runs (for example "Cold email pitching the offer only" sets how cold emails are written; it does not ask for cold email). Words about who to reach, a region or the offer ask for no channel. Judge on the brief's words only.`,
+    criteria: {
+      true: `The brief asks to use "${channelName}" to reach people.`,
+      false: `The brief does not ask to use "${channelName}" (silent, only allows it, only sets how it works, or excludes it).`,
     },
   };
 }

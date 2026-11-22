@@ -43,6 +43,7 @@ import {
   pipesToJudge,
   pipeCandidatesOf,
   pipeQuestion,
+  pipeNamedQuestion,
   pipeSignatureOf,
   pipeVerdictCurrent,
   pipeWords,
@@ -319,15 +320,15 @@ async function askJev(state: Record<string, unknown>, options: readonly PlayOpti
   return { chosenPipeId: chosen.id, confidence: a.confidence, probabilities, model: body.model };
 }
 
-/** Pipes asked about in ONE Jev call (one `noul` question each, the brief read once). */
-const PIPES_PER_CALL = 12;
+/** Pipes asked about in ONE Jev call (two `noul` questions each: ruled out, named; the brief read once). */
+const PIPES_PER_CALL = 8;
 
-/** Jev on several pipes at once: p (the brief rules it out) per pipe id. Throws on any unreadable answer. */
-async function askPipeJudge(brief: string, items: ReadonlyArray<{ pipeId: string; channelName: string; words: string }>): Promise<{ byPipe: Map<string, number>; model: string }> {
+/** Jev on several pipes at once: per pipe id, p (the brief rules it out) and p (the brief names it). Throws on any unreadable answer. */
+async function askPipeJudge(brief: string, items: ReadonlyArray<{ pipeId: string; channelName: string; words: string }>): Promise<{ byPipe: Map<string, { excluded: number; named: number }>; model: string }> {
   const base = process.env.CHAT_SERVICE_URL;
   const apiKey = process.env.CHAT_SERVICE_API_KEY;
   if (!base || !apiKey) throw new Error("[features-service] CHAT_SERVICE_URL / CHAT_SERVICE_API_KEY not configured");
-  const questions = Object.fromEntries(items.map((it, i) => [`p${i}`, pipeQuestion(it.channelName, it.words)]));
+  const questions = Object.fromEntries(items.flatMap((it, i) => [[`p${i}`, pipeQuestion(it.channelName, it.words)], [`n${i}`, pipeNamedQuestion(it.channelName, it.words)]]));
   const res = await fetchWithRetry(
     `${base}/internal/platform-judgments`,
     { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": apiKey }, body: JSON.stringify({ state: { brief }, questions, support: BRIEF_JUDGMENT_SUPPORT }) },
@@ -336,12 +337,13 @@ async function askPipeJudge(brief: string, items: ReadonlyArray<{ pipeId: string
   if (!res.ok) throw new Error(`chat-service platform-judgments ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const body = (await res.json()) as { model?: unknown; answers?: Record<string, { type?: unknown; noul?: unknown }> };
   if (typeof body.model !== "string" || body.model === "") throw new Error("chat-service answered without naming the model release");
-  const byPipe = new Map<string, number>();
-  items.forEach((it, i) => {
-    const a = body.answers?.[`p${i}`];
-    if (a?.type !== "noul" || typeof a.noul !== "number" || !Number.isFinite(a.noul)) throw new Error(`chat-service answered pipe ${it.pipeId} without a readable probability`);
-    byPipe.set(it.pipeId, a.noul);
-  });
+  const byPipe = new Map<string, { excluded: number; named: number }>();
+  const pOf = (key: string, pipeId: string): number => {
+    const a = body.answers?.[key];
+    if (a?.type !== "noul" || typeof a.noul !== "number" || !Number.isFinite(a.noul)) throw new Error(`chat-service answered pipe ${pipeId} without a readable probability`);
+    return a.noul;
+  };
+  items.forEach((it, i) => byPipe.set(it.pipeId, { excluded: pOf(`p${i}`, it.pipeId), named: pOf(`n${i}`, it.pipeId) }));
   return { byPipe, model: body.model };
 }
 
@@ -354,6 +356,9 @@ export interface PipeVerdictRow {
   /** The brief rules it out: no plan goes through it. Null when not judged (empty brief: every pipe kept; judge failed). */
   excluded: boolean | null;
   probability: number | null;
+  /** The brief NAMES the pipe's channel as one to use (Jev p >= 0.5): the plan keeps it. Null when not judged. */
+  named: boolean | null;
+  namedProbability: number | null;
   source: "jev" | "empty_brief" | null;
   failure: string | null;
 }
@@ -370,15 +375,16 @@ async function judgePipes(c: ShadowCampaign, model: CatalogueModel, stored: Read
   const failures: string[] = [];
   const toAsk: Array<{ pipeId: string; channelName: string; words: string; signature: string }> = [];
   for (const p of candidates) {
-    const row: PipeVerdictRow = { pipeId: p.id, channelName: p.channelName, fromStep: p.fromStep, toStep: p.toStep, inRunningFunnel: running.has(p.id), excluded: null, probability: null, source: null, failure: null };
+    const row: PipeVerdictRow = { pipeId: p.id, channelName: p.channelName, fromStep: p.fromStep, toStep: p.toStep, inRunningFunnel: running.has(p.id), excluded: null, probability: null, named: null, namedProbability: null, source: null, failure: null };
     rows.set(p.id, row);
     if (briefHash === null) {
-      Object.assign(row, { excluded: false, source: "empty_brief" });
+      Object.assign(row, { excluded: false, named: false, source: "empty_brief" });
       continue;
     }
     const signature = pipeSignatureOf(model, p);
     const kept = stored.get(`${c.id}|${p.id}`);
-    if (pipeVerdictCurrent(kept, briefHash, signature)) Object.assign(row, { excluded: kept!.excluded, probability: kept!.probability, source: "jev" });
+    if (pipeVerdictCurrent(kept, briefHash, signature) && kept!.namedProbability !== null)
+      Object.assign(row, { excluded: kept!.excluded, probability: kept!.probability, named: kept!.namedProbability >= 0.5, namedProbability: kept!.namedProbability, source: "jev" });
     else toAsk.push({ pipeId: p.id, channelName: p.channelName, words: pipeWords(model, p), signature });
   }
   const batches: Array<typeof toAsk> = [];
@@ -387,10 +393,12 @@ async function judgePipes(c: ShadowCampaign, model: CatalogueModel, stored: Read
     try {
       const { byPipe, model: release } = await askPipeJudge(c.brief!, batch);
       for (const it of batch) {
-        const probability = byPipe.get(it.pipeId)!;
-        const verdict: PipeVerdict = { campaignId: c.id, pipeId: it.pipeId, briefHash: briefHash!, pipeSignature: it.signature, excluded: probability >= 0.5, probability, model: release, judgedAt: now.toISOString() };
+        const { excluded: probability, named: namedProbability } = byPipe.get(it.pipeId)!;
+        // A pipe the brief NAMES is never ruled out by it: the two answers disagree, the brief's own words win.
+        const named = namedProbability >= 0.5;
+        const verdict: PipeVerdict = { campaignId: c.id, pipeId: it.pipeId, briefHash: briefHash!, pipeSignature: it.signature, excluded: probability >= 0.5 && !named, probability, namedProbability, model: release, judgedAt: now.toISOString() };
         await writePipeVerdict({ ...verdict, orgId: c.orgId });
-        Object.assign(rows.get(it.pipeId)!, { excluded: verdict.excluded, probability, source: "jev" });
+        Object.assign(rows.get(it.pipeId)!, { excluded: verdict.excluded, probability, named, namedProbability, source: "jev" });
       }
     } catch (error) {
       const failure = failureOf(error);

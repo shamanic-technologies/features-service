@@ -1071,6 +1071,8 @@ export const factoryPipeVerdicts = pgTable(
     pipeSignature: text("pipe_signature").notNull(),
     excluded: boolean("excluded").notNull(),
     probability: doublePrecision("probability").notNull(),
+    /** Jev's p that the brief NAMES the channel (MON-PLAN-FOLLOWING-1122); null on a verdict stored before. */
+    namedProbability: doublePrecision("named_probability"),
     model: text("model").notNull(),
     judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
   },

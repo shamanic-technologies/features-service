@@ -128,7 +128,7 @@ export async function readPipeVerdicts(campaignIds: readonly string[]): Promise<
   const out = new Map<string, PipeVerdict>();
   if (campaignIds.length === 0) return out;
   const rows = await db.select().from(factoryPipeVerdicts).where(inArray(factoryPipeVerdicts.campaignId, [...campaignIds]));
-  for (const r of rows) out.set(`${r.campaignId}|${r.pipeId}`, { campaignId: r.campaignId, pipeId: r.pipeId, briefHash: r.briefHash, pipeSignature: r.pipeSignature, excluded: r.excluded, probability: r.probability, model: r.model, judgedAt: r.judgedAt.toISOString() });
+  for (const r of rows) out.set(`${r.campaignId}|${r.pipeId}`, { campaignId: r.campaignId, pipeId: r.pipeId, briefHash: r.briefHash, pipeSignature: r.pipeSignature, excluded: r.excluded, probability: r.probability, namedProbability: r.namedProbability, model: r.model, judgedAt: r.judgedAt.toISOString() });
   return out;
 }
 
