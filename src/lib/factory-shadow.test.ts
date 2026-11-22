@@ -17,6 +17,7 @@ import {
   orgDayCountsOf,
   pipeCandidatesOf,
   pipeQuestion,
+  pipeNamedQuestion,
   pipeSignatureOf,
   pipeWords,
   PIPE_JUDGE_RULE,
@@ -418,12 +419,43 @@ describe("a channel the brief NAMES stays in the plan on its leg (owner 2026-10-
     expect(named.briefNamedChannels).toEqual(["ai-meeting-booking"]);
   });
 
-  it("a brief names channels only when it rules some out: the kept ones (Jev) are the named ones", () => {
-    const v = (pipeId: string, excluded: boolean | null, source: string | null = "jev") => ({ pipeId, excluded, source });
+  it("the named channels are the ones the judge says the brief NAMES, never every channel merely kept (MON-PLAN-FOLLOWING-1122)", () => {
+    const v = (pipeId: string, named: boolean | null) => ({ pipeId, excluded: false, source: "jev", named });
     expect(briefNamedChannels(model, [v(COLD, false), v("ai-meeting-booking|conversation_to_meeting_booked", false)])).toEqual(new Set());
-    expect(briefNamedChannels(model, [v(COLD, false), v("ai-meeting-booking|conversation_to_meeting_booked", false), v("lead-sourcing|start_to_lead_found", true), v("sourcing-apollo-cold-filters|start_to_lead_found", null, null)])).toEqual(
-      new Set(["sales-cold-email-outreach", "ai-meeting-booking"]),
-    );
+    expect(briefNamedChannels(model, [v(COLD, false), v("ai-meeting-booking|conversation_to_meeting_booked", true), v("lead-sourcing|start_to_lead_found", null)])).toEqual(new Set(["ai-meeting-booking"]));
+  });
+});
+
+describe("a plan keeps every pipe the campaign was LAUNCHED on that its brief names (MON-PLAN-FOLLOWING-1122)", () => {
+  const model = buildCatalogueModel(inputs());
+  const APOLLO_FUNNEL = "start_to_lead_found@sourcing-apollo-cold-filters+lead_found_to_conversation@sales-cold-email-outreach+conversation_to_paid_client";
+  // Prod 2026-11-22: a Threads campaign whose brief ends « Cold email pitching the offer only » was planned through cold
+  // email (more named channels than the Threads line) and campaign-service kept Threads running beside a stale plan.
+  const named = new Set(["lead-sourcing", "sourcing-apollo-cold-filters", "sales-cold-email-outreach"]);
+  const sources = (p: ReturnType<typeof planCampaign>) => p.shadow!.legs.map((l) => l.channelSlug).filter((c) => c === "lead-sourcing" || c === "sourcing-apollo-cold-filters");
+
+  it("several named channels compete on a leg: the launched one stays, whatever the cheaper line", () => {
+    const frame = { salesFunnelId: APOLLO_FUNNEL, target: "conversation", mode: null, triggerId: null } as const;
+    // Apollo is the cheaper source: launched on it, it stays.
+    const onApollo = planCampaign(model, { ...frame, bornSalesFunnelId: APOLLO_FUNNEL }, new Map(), NO_STEPS, "fleet", new Set(), named);
+    expect(sources(onApollo)).toEqual(["sourcing-apollo-cold-filters"]);
+    // Launched on Lead Sourcing (its plan ran Apollo since): the plan goes back to Lead Sourcing.
+    const onLeadSourcing = planCampaign(model, { ...frame, bornSalesFunnelId: PROACTIVE_RUNNING }, new Map(), NO_STEPS, "fleet", new Set(), named);
+    expect(sources(onLeadSourcing)).toEqual(["lead-sourcing"]);
+    expect(onLeadSourcing.launchedNamedPipes).toEqual(["lead-sourcing|start_to_lead_found", COLD]);
+    expect(onLeadSourcing.launchedNamedPipesKept).toBe(true);
+  });
+
+  it("a launched pipe the brief does not name never holds the plan", () => {
+    const p = planCampaign(model, { salesFunnelId: APOLLO_FUNNEL, bornSalesFunnelId: PROACTIVE_RUNNING, target: "conversation", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet", new Set(), new Set(["sales-cold-email-outreach"]));
+    expect(sources(p)).toEqual(["sourcing-apollo-cold-filters"]);
+    expect(p.launchedNamedPipes).toEqual([COLD]);
+  });
+
+  it("no line can keep a launched named pipe (ruled out): the best line, said so", () => {
+    const p = planCampaign(model, { salesFunnelId: APOLLO_FUNNEL, bornSalesFunnelId: PROACTIVE_RUNNING, target: "conversation", mode: null, triggerId: null }, new Map(), NO_STEPS, "fleet", new Set(["lead-sourcing|start_to_lead_found"]), named);
+    expect(sources(p)).toEqual(["sourcing-apollo-cold-filters"]);
+    expect(p.launchedNamedPipesKept).toBe(false);
   });
 });
 
@@ -465,8 +497,17 @@ describe("the pipe judge reads every play a channel can run (MON-BRIEF-JUDGE-111
     expect(pipeSignatureOf(reworded, reworded.pipes.get(LS)!)).not.toBe(pipeSignatureOf(model, model.pipes.get(LS)!));
   });
 
+  it("v6: a sentence setting how a channel works rules nothing out; the brief NAMING a channel is its own question (MON-PLAN-FOLLOWING-1122)", () => {
+    expect(PIPE_JUDGE_RULE).toBe("channel-job-v6");
+    expect(pipeQuestion("Founder Hello", "words").instructions).toContain('"Cold email pitching the offer only"');
+    expect(pipeQuestion("Founder Hello", "words").instructions).toContain('it rules no channel out, "Founder Hello" included');
+    const n = pipeNamedQuestion("Sales Cold Email Outreach", "words");
+    expect(n.type).toBe("noul");
+    expect(n.instructions).toContain('only sets a rule on how it works or what it says if it runs (for example "Cold email pitching the offer only"');
+    expect(n.criteria.true).toContain('"Sales Cold Email Outreach"');
+  });
+
   it("v5: a play doing what the brief asks keeps the channel; another channel's job rules it out only when no play fits", () => {
-    expect(PIPE_JUDGE_RULE).toBe("channel-job-v5");
     // HUMAN-BRIEF-1121: no robot list format is taught to the judge any more.
     expect(pipeQuestion("Lead Sourcing", "words").instructions).not.toContain("Use only these channels");
     const q = pipeQuestion("Lead Sourcing", "words");

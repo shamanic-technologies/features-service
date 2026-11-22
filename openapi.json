@@ -38469,7 +38469,17 @@
                 "probability": {
                   "type": "number",
                   "nullable": true,
-                  "description": "Jev's p that the brief rules it out (>= 0.5 = excluded); null with no Jev call."
+                  "description": "Jev's p that the brief rules it out (>= 0.5 = excluded, unless the brief names it); null with no Jev call."
+                },
+                "named": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "The brief NAMES this pipe's channel as one to use (Jev p >= 0.5, MON-PLAN-FOLLOWING-1122): the plan keeps it, it is never ruled out. Null when not judged; absent on a body stored before 2026-11-22."
+                },
+                "namedProbability": {
+                  "type": "number",
+                  "nullable": true,
+                  "description": "Jev's p that the brief names the channel; null with no Jev call."
                 },
                 "source": {
                   "type": "string",
@@ -39011,7 +39021,19 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Channels (slugs) the brief names: on a brief that rules some channels out, every channel the pipe judge kept. Every plan line carries as many of them as any line can (a named channel stays on its leg). Absent on a plan stored before 2026-10-29."
+                "description": "Channels (slugs) the brief NAMES as ones to use (the pipe judge's `named`, MON-PLAN-FOLLOWING-1122; supersedes « every channel kept on a brief that rules one out »). Every plan line carries as many of them as any line can (a named channel stays on its leg). Absent on a plan stored before 2026-10-29."
+              },
+              "launchedNamedPipes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Pipes (base ids `<channel>|<leg>`) of the funnel the campaign was LAUNCHED on whose channel the brief names: a plan keeps them all whenever a runnable line can; campaign-service never drains a unit of one of them. Absent on a plan stored before 2026-11-22."
+              },
+              "launchedNamedPipesKept": {
+                "type": "boolean",
+                "nullable": true,
+                "description": "The shadow line keeps every launched named pipe; false = no runnable line to the Target can (the plan contradicts the brief); null with no shadow line. Absent on a plan stored before 2026-11-22."
               }
             },
             "required": [
