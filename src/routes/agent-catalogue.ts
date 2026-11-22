@@ -410,8 +410,23 @@ export interface OfferContext {
   lifetimeRevenueUsd: number | null;
   lifetimeRevenueSource: "offer_stated" | "fleet_median" | null;
   rates: Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>;
-  /** The steps the offer's business has (owner 2026-10-12, `lib/offer-step-fit.ts`): a funnel through a step it does not have is SET ASIDE. */
-  steps: OfferSteps;
+  /**
+   * The steps the offer's business has (owner 2026-10-12, `lib/offer-step-fit.ts`): a funnel through a step it does not have is SET ASIDE.
+   * `before` = the campaign's Target named by the read (`?target=`, GS-STEP11-NO-CAMPAIGN-1122): only the steps before it are checked.
+   */
+  steps: OfferSteps & { before?: string | null };
+}
+
+/**
+ * The per-offer read's `?target=<step key>` (GS-STEP11-NO-CAMPAIGN-1122): the Target of the campaign the read proposes funnels
+ * for. A funnel is then set aside only for a step it walks BEFORE the Target (`lib/offer-step-fit.ts`). Unknown step = 400
+ * `target_unknown` (the campaign-brief and target-volume-estimate reads' own word). Ignored on a read naming no offer.
+ */
+function withFitTarget(req: Request, model: CatalogueModel, offer: OfferContext | null): OfferContext | null {
+  const raw = typeof req.query.target === "string" && req.query.target !== "" ? req.query.target : null;
+  if (!offer || raw === null) return offer;
+  if (!model.steps.has(raw)) throw new BadQuery("target_unknown", `no catalogue step ${raw}`);
+  return { ...offer, steps: { ...offer.steps, before: raw } };
 }
 
 async function offerContextOf(req: Request): Promise<OfferContext | null> {
@@ -460,6 +475,7 @@ export async function offerContextFor(offerId: string, brandId: string, ids: { o
  */
 const offerStepsEcho = (o: OfferContext, m: CatalogueModel) => ({
   stated: o.steps.stated,
+  checkedBefore: o.steps.before ? { id: o.steps.before, name: stepLabel(m, o.steps.before) } : null,
   steps: o.steps.steps ? o.steps.steps.map((k) => ({ id: k, name: stepLabel(m, k) })) : null,
   statedAt: o.steps.statedAt,
   alwaysPresent: ALWAYS_PRESENT_STEPS.map((k) => ({ id: k, name: stepLabel(m, k) })),
@@ -877,8 +893,9 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
     const q = qOf(req);
     const containsRaw = listOf(req, "containsSteps", false);
     const runnable = runnableOf(req);
-    const offer = await offerContextOf(req);
-    const { model, names } = await loadModel(offer);
+    const offerRead = await offerContextOf(req);
+    const { model, names } = await loadModel(offerRead);
+    const offer = withFitTarget(req, model, offerRead);
     let contains: string[] | null = null;
     if (containsRaw) {
       contains = containsRaw.map((raw) => {
@@ -926,8 +943,9 @@ router.get("/internal/catalogue/sales-paths", apiKeyOnly, async (req, res) => {
 
 router.get("/internal/catalogue/sales-paths/:id", apiKeyOnly, async (req, res) => {
   try {
-    const offer = await offerContextOf(req);
-    const { model, names } = await loadModel(offer);
+    const offerRead = await offerContextOf(req);
+    const { model, names } = await loadModel(offerRead);
+    const offer = withFitTarget(req, model, offerRead);
     const path = pathById(model, req.params.id);
     if (!path) return void res.status(404).json({ error: `no sales path ${req.params.id}`, reason: "sales_path_not_found" });
     const n = await named([salesPathNameKeyOf(path.id)], names);
@@ -1258,8 +1276,9 @@ async function listSalesFunnels(req: Request, res: Response, forceRunnable: bool
     const containsChannels = listOf(req, "containsChannels");
     const runnable = forceRunnable || runnableOf(req);
     // Per-offer pricing only on the service-key read (it needs the offer's org).
-    const offer = forceRunnable ? null : await offerContextOf(req);
-    const { model, names } = await loadModel(offer);
+    const offerRead = forceRunnable ? null : await offerContextOf(req);
+    const { model, names } = await loadModel(offerRead);
+    const offer = withFitTarget(req, model, offerRead);
     const onPaths: CataloguePath[] = paths
       ? paths.map((id) => {
           const p = pathById(model, id);
@@ -1365,8 +1384,9 @@ const funnelPipes = (f: CatalogueFunnel): CataloguePipe[] => f.legs.flatMap(legP
 
 router.get("/internal/catalogue/sales-funnels/:id", apiKeyOnly, async (req, res) => {
   try {
-    const offer = await offerContextOf(req);
-    const { model, names } = await loadModel(offer);
+    const offerRead = await offerContextOf(req);
+    const { model, names } = await loadModel(offerRead);
+    const offer = withFitTarget(req, model, offerRead);
     const f = funnelById(model, req.params.id);
     if (!f) return void res.status(404).json({ error: `no sales funnel ${req.params.id}`, reason: "sales_funnel_not_found" });
     const n = await named([f.id, salesPathNameKeyOf(f.pathId), ...funnelPipes(f).map(nameKeyOfPipe)], names);

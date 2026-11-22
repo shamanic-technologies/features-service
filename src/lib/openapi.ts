@@ -8200,6 +8200,7 @@ catalogueRead("/internal/catalogue/steps/{id}", "One step (internal, api-key)", 
 const catalogueOfferQuery = {
   offerId: z.string().describe("PER-OFFER price (2026-10-10, the signup's \"Your campaign\" step and payment wall): the same formula with THIS offer's lifetime revenue (stated, else the fleet median) and its brand's own leg rates where it has them (measured on its leads / CRM = `offer_measured`, stated = `offer_stated`), else the fleet's. Pipe costs stay the fleet's measured ones. ALSO applies the offer's stated STEPS (owner 2026-10-12): a funnel or path walking a step the offer's business does not have (brand-service `GET /orgs/brands/{brandId}/offers/{offerId}/steps`; Lead found and Paid client always count as present) leaves `rows` for `setAside`, with its missing steps; an offer that never stated its steps keeps the full list. A failed steps read is 502 `offer_steps_unreadable`, never an unfiltered list. Needs `brandId` and the `x-org-id` header (400 `brand_required` / `org_required`; 404 `offer_not_found`). Still `estimated` whenever a rate or the lifetime revenue is not measured.").optional(),
   brandId: z.string().describe("The offer's brand (required with offerId).").optional(),
+  target: z.string().describe("Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.").optional(),
 };
 const catalogueOfferEcho = z
   .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate.") })
@@ -8211,6 +8212,7 @@ const catalogueOfferSteps = z
     stated: z.boolean().describe("false = the offer never stated its steps: nothing is set aside."),
     steps: z.array(catalogueStepRef).nullable().describe("The steps the offer's business has (null when never stated)."),
     statedAt: z.string().nullable(),
+    checkedBefore: catalogueStepRef.nullable().describe("The Target the read named (`?target=`): only the steps before it were checked. Null = every step."),
     alwaysPresent: z.array(catalogueStepRef).describe("Steps every business has by definition (Lead found, Paid client), counted present."),
   })
   .describe("Per-offer read only (owner 2026-10-12): what the offer stated about the steps its business has.")

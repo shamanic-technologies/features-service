@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { missingStepsOf, setAsideCountByStep, splitByOfferSteps } from "./offer-step-fit.js";
+import { missingStepsOf, preconditionStepsOf, setAsideCountByStep, splitByOfferSteps } from "./offer-step-fit.js";
 
 const DOC_DINNERS = { stated: true, steps: ["conversation", "booking_call", "meeting_booked", "meeting_attended", "website_visit"] };
 const PURCHASE = ["website_visit", "purchase", "paid_client"];
@@ -21,5 +21,16 @@ describe("offer step fit (owner 2026-10-12)", () => {
     expect(kept).toEqual([MEETING]);
     expect(setAside.map((x) => x.missingSteps)).toEqual([["purchase"], ["signup", "purchase"]]);
     expect(setAsideCountByStep(setAside)).toEqual([{ step: "purchase", setAsideCount: 2 }, { step: "signup", setAsideCount: 1 }]);
+  });
+
+  it("a campaign aimed at a Target needs only the steps before it (GS-STEP11-NO-CAMPAIGN-1122)", () => {
+    const signupBusiness = { stated: true, steps: ["conversation", "website_visit", "signup"] };
+    expect(missingStepsOf(MEETING, signupBusiness)).toEqual(["meeting_booked", "meeting_attended"]);
+    expect(missingStepsOf(MEETING, { ...signupBusiness, before: "meeting_booked" })).toEqual([]);
+    // A step before the Target is still a precondition; a path not reaching the Target is checked whole.
+    expect(missingStepsOf(MEETING, { stated: true, steps: [], before: "meeting_booked" })).toEqual(["conversation"]);
+    expect(missingStepsOf(PURCHASE, { ...DOC_DINNERS, before: "meeting_booked" })).toEqual(["purchase"]);
+    expect(missingStepsOf(PURCHASE, { ...DOC_DINNERS, before: "paid_client" })).toEqual(["purchase"]);
+    expect(preconditionStepsOf(MEETING, null)).toEqual(MEETING);
   });
 });
