@@ -18,6 +18,7 @@ import { loadPlayCatalogue } from "./plays-store.js";
 import type { Strategy } from "./plays.js";
 import { fetchSalesFunnelCampaigns } from "./sales-funnel-campaigns-client.js";
 import { readRunnableScripts } from "./script-catalogue-client.js";
+import { briefAsksOfCampaign } from "./brief-opt-in-io.js";
 import {
   briefHashOf,
   engineStrategyBearsQuestion,
@@ -125,7 +126,13 @@ export const labelOfOutcome = (outcome: string): string => {
 
 export type CampaignEngineStrategy =
   | { kind: "legacy" }
-  | { kind: "kept"; row: StoredEngineStrategy; strategy: Strategy | null };
+  | {
+      kind: "kept";
+      row: StoredEngineStrategy;
+      strategy: Strategy | null;
+      /** The opt-in script tactics the campaign's BRIEF asks for on this Engine (tactic ids; `lib/brief-opt-in.ts`). */
+      briefAsks: string[];
+    };
 
 const held = new Map<string, { at: number; value: Promise<CampaignEngineStrategy> }>();
 const keyOf = (campaignId: string, outcome: string) => `${campaignId}|${outcome}`;
@@ -185,28 +192,39 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     const brief = row.brief ?? null;
     const briefHash = briefHashOf(brief);
     const catalogue = await loadPlayCatalogue();
+    const label = engine.label ?? labelOfOutcome(engine.outcome);
+    let scripts: Awaited<ReturnType<typeof readRunnableScripts>> = [];
+    let scriptsRead = false;
+    const scriptsNow = async () => {
+      if (!scriptsRead) {
+        scripts = await readRunnableScripts();
+        scriptsRead = true;
+      }
+      return scripts;
+    };
+    // PLAN-RECURSIVE-PER-ENGINE-1124-SOURCES: the opt-in script tactics the brief asks for on this Engine, judged in this
+    // same pass (stored answers, the stale ones re-asked of Jev). Before the options: an option is what it runs WITH them.
+    // A failure throws like the strategy judge's. No opt-in tactic on the Engine, or no brief = no call.
+    const briefAsks = await briefAsksOfCampaign(campaign, { outcome: engine.outcome, label }, brief, briefHash, catalogue, scriptsNow);
+    const asked = new Set(briefAsks);
     // Options are read only when a judged verdict may have gone stale on them (a carried one stands on its brief alone).
     let options: EngineStrategyOption[] | null = null;
-    let scripts: Awaited<ReturnType<typeof readRunnableScripts>> = [];
     const optionsNow = async () => {
-      if (!options) {
-        scripts = await readRunnableScripts();
-        options = engineStrategyOptions(engine.outcome, scripts, catalogue, stored?.strategyId ? [stored.strategyId] : []);
-      }
+      if (!options) options = engineStrategyOptions(engine.outcome, await scriptsNow(), catalogue, stored?.strategyId ? [stored.strategyId] : [], asked);
       return options;
     };
     const signature = stored?.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
     const need = engineStrategyNeed(stored, briefHash, signature);
-    if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies) };
+    if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies), briefAsks };
     if (need === "no_condition") {
       // No brief: no strategy, no filter. Every runnable script of the Engine, the Rating picks (NO-BRIEF-UNBLOCK-1111).
       const next = { campaignId: campaign.campaignId, outcome: engine.outcome, orgId: campaign.orgId, strategyId: null, source: "empty_brief" as const, briefHash: null, optionsSignature: null, confidence: null, model: null, carriedFrom: null };
       await writeEngineStrategy(next);
       console.log(`[features-service] campaign ${campaign.campaignId} states no brief: no condition on ${engine.outcome}`);
-      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: null };
+      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: null, briefAsks };
     }
     const opts = await optionsNow();
-    const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label: engine.label ?? labelOfOutcome(engine.outcome) }, { scripts, options: opts, c: catalogue }), opts);
+    const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label }, { scripts, options: opts, c: catalogue, briefAsks: asked }), opts);
     const next = {
       campaignId: campaign.campaignId,
       outcome: engine.outcome,
@@ -221,7 +239,7 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     };
     await writeEngineStrategy(next);
     console.log(`[features-service] brief of campaign ${campaign.campaignId} judged on Engine ${engine.outcome}: ${pick.option.strategyId ?? "no condition"} (${pick.confidence}, was ${stored ? (stored.strategyId ?? "no condition") : "none"})`);
-    return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: strategyOfStored(next, catalogue.strategies) };
+    return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: strategyOfStored(next, catalogue.strategies), briefAsks };
   })();
   held.set(key, { at: Date.now(), value });
   value.catch(() => {

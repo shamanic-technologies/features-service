@@ -21,6 +21,7 @@ import type { PlayCatalogue, Strategy, Tactic } from "./plays.js";
 import { strategyOnEngine } from "./plays.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
+import { briefAsksByEngine, type StoredBriefAsk } from "./brief-opt-in.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
 import { CAMPAIGN_DRAWS, type DrawRule, type StrategyState } from "./campaign-engine-scripts.js";
 import { pickScript, type OutcomeValue, type ScriptPick, type ScriptRating } from "./script-value-rating.js";
@@ -104,6 +105,8 @@ export function campaignPlanTree(input: {
   target: string | null;
   /** The campaign's stored strategy per Engine (`campaign_engine_strategies`); an Engine with none reads `not_judged_yet`. */
   stored: readonly Pick<StoredEngineStrategy, "outcome" | "strategyId" | "campaignId">[];
+  /** STORED answers of what the campaign's brief asks for (opt-in tactics per Engine, `lib/brief-opt-in.ts`); never asked here. */
+  briefAsks?: readonly Pick<StoredBriefAsk, "outcome" | "tacticId" | "asks">[];
   runnable: readonly RunnableScript[];
   catalogue: Pick<PlayCatalogue, "tactics" | "strategies" | "tacticsByWriter">;
   /** The fleet Rating (every script's runs and reach): what the runner draws on. Never served. */
@@ -116,6 +119,7 @@ export function campaignPlanTree(input: {
   if (!input.target) return { nodes: [], unavailableReason: "campaign_states_no_target" };
   const draws = input.draws ?? CAMPAIGN_DRAWS;
   const storedByOutcome = new Map(input.stored.map((s) => [s.outcome, s]));
+  const briefAsks = briefAsksByEngine(input.briefAsks ?? []);
   const nodes: PlanTreeNode[] = [];
 
   const walk = (outcome: string, path: readonly string[], neededByScript: string | null): string => {
@@ -155,7 +159,7 @@ export function campaignPlanTree(input: {
           ...onScripts.excludesTacticIds.map((t) => ({ kind: "excludes" as const, tacticId: t, name: tactic(t)?.name ?? t, clientLine: tactic(t)?.clientLine ?? null })),
         ]
       : [];
-    const kept = scriptsKeptByStrategy(scripts, strategy, input.catalogue);
+    const kept = scriptsKeptByStrategy(scripts, strategy, input.catalogue, null, briefAsks.get(outcome));
     const keptDynasties = new Set(kept.keptDynasties);
     const keptKeys = kept.keptDynasties.map((d) => `${outcome}/${d}`);
     const counts = new Map<string, number>(keptKeys.map((k) => [k, 0]));

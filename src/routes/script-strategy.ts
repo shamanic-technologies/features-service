@@ -7,6 +7,8 @@
  * per campaign x Engine, judged from its brief). The Engine's runnable scripts come from workflow-service's catalogue
  * (held 60 s), the verdicts from the tactic sweep. Unreadable = 502: the runner runs nothing and retries. No brief = no
  * condition (`strategyId: null`, every runnable script; NO-BRIEF-UNBLOCK-1111, was 503 `campaign_states_no_brief`).
+ * An OPT-IN script tactic lets a script in where the strategy requires it OR the campaign's brief asks for it
+ * (`briefAsksTacticIds`, judged by Jev in the same pass as the strategy, stored; a Jev failure = 502 like the strategy's).
  *
  *   GET /internal/script-strategy?outcome=[&strategyId=]   (api key; no campaign yet, PREVIEW-EMAIL-503-1111)
  *
@@ -43,7 +45,10 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
     const stored = await engineStrategyOfCampaign({ campaignId: unit.salesFunnelCampaignId, orgId: unit.orgId, brandId: unit.brandId }, { outcome });
     if (stored.kind !== "kept") throw new Error(`no verdict for campaign ${unit.salesFunnelCampaignId} on ${outcome}`);
     const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScripts()]);
-    const kept = scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue);
+    // What the campaign asks for = what its strategy requires and what its BRIEF asks for (opt-in tactics, judged in the
+    // same pass as the strategy; PLAN-RECURSIVE-PER-ENGINE-1124-SOURCES).
+    const briefAsks = stored.briefAsks ?? [];
+    const kept = scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), stored.strategy, catalogue, null, new Set(briefAsks));
     // An Engine whose strategy keeps no runnable script cannot run either: red on Monitoring (NO-BRIEF-UNBLOCK-1111).
     noteEngineAnswer(campaignId, outcome, kept.keptDynasties.length === 0 ? "no_runnable_script_kept" : null);
     res.json({
@@ -52,6 +57,7 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
       strategyId: stored.strategy?.id ?? null,
       strategyName: stored.strategy?.name ?? null,
       strategySource: `campaign_engine_${stored.row.source}`,
+      briefAsksTacticIds: briefAsks,
       ...kept,
     });
   } catch (error) {
@@ -75,6 +81,7 @@ async function scriptsWithoutCampaign(req: Request, res: Response, outcome: stri
       strategyId: strategy?.id ?? null,
       strategyName: strategy?.name ?? null,
       strategySource: strategy ? "stated_by_caller" : "no_campaign",
+      briefAsksTacticIds: [],
       ...kept,
     });
   } catch (error) {
