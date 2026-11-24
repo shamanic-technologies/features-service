@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { strategyOnEngine, writerSubjectKey, type PlayCatalogue, type Strategy } from "./plays.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
+import { NO_ASK } from "./brief-opt-in.js";
 
 /**
  * `empty_brief` = the campaign states no brief: no condition on the Engine, every runnable script allowed, the Rating
@@ -94,19 +95,21 @@ export function engineStrategyOptions(
   scripts: readonly RunnableScript[],
   c: Pick<PlayCatalogue, "strategies" | "tactics" | "tacticsByWriter">,
   carried: Iterable<string> = [],
+  /** The opt-in tactic ids the campaign's brief asks for on this Engine (`lib/brief-opt-in.ts`): an option is what it runs WITH them. */
+  briefAsks: ReadonlySet<string> = NO_ASK,
 ): EngineStrategyOption[] {
   const own = scripts.filter((s) => s.outcome === outcome);
   const dynasties = new Set(own.map((x) => x.dynasty)).size;
   const keep = new Set<string>();
   for (const s of c.strategies.values()) {
     if (own.length === 0) break;
-    const kept = scriptsKeptByStrategy(own.filter((x) => judgedOn(x, own, s, c)), s, c);
+    const kept = scriptsKeptByStrategy(own.filter((x) => judgedOn(x, own, s, c)), s, c, null, briefAsks);
     if (kept.scriptTacticIds.length > 0 && kept.keptDynasties.length > 0 && kept.scripts.some((x) => !x.kept)) keep.add(s.id);
   }
   for (const id of carried) {
     const s = c.strategies.get(id);
     if (!s) continue;
-    const keepsAll = own.length > 0 && scriptsKeptByStrategy(own, s, c).keptDynasties.length >= dynasties;
+    const keepsAll = own.length > 0 && scriptsKeptByStrategy(own, s, c, null, briefAsks).keptDynasties.length >= dynasties;
     const writes = [...s.requiresTacticIds, ...s.excludesTacticIds].some((t) => ["template", "llm"].includes(c.tactics.get(t)?.appliesTo ?? ""));
     if (!keepsAll || writes) keep.add(id);
   }
@@ -129,8 +132,8 @@ function judgedOn(script: RunnableScript, own: readonly RunnableScript[], s: Str
  * PURE: what one option RUNS on this Engine: the script dynasties it keeps and the ones it never runs, read the way a run
  * reads them (`scriptsKeptByStrategy`). Empty both = the Engine has no runnable script.
  */
-export function engineOptionEffect(outcome: string, scripts: readonly RunnableScript[], strategy: Strategy | null, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">): { runs: string[]; neverRuns: string[] } {
-  const k = scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), strategy, c);
+export function engineOptionEffect(outcome: string, scripts: readonly RunnableScript[], strategy: Strategy | null, c: Pick<PlayCatalogue, "tactics" | "tacticsByWriter">, briefAsks: ReadonlySet<string> = NO_ASK): { runs: string[]; neverRuns: string[] } {
+  const k = scriptsKeptByStrategy(scripts.filter((s) => s.outcome === outcome), strategy, c, null, briefAsks);
   return { runs: [...new Set(k.keptDynasties)], neverRuns: [...new Set(k.scripts.filter((x) => !x.kept).map((x) => x.dynasty))] };
 }
 
@@ -202,7 +205,7 @@ export function engineStrategyPick<O extends EngineStrategyOption>(options: read
 export function engineStrategyState(
   brief: string,
   engine: { outcome: string; label: string },
-  facts: { scripts: readonly RunnableScript[]; options: readonly EngineStrategyOption[]; c: Pick<PlayCatalogue, "strategies" | "tactics" | "tacticsByWriter"> } | null = null,
+  facts: { scripts: readonly RunnableScript[]; options: readonly EngineStrategyOption[]; c: Pick<PlayCatalogue, "strategies" | "tactics" | "tacticsByWriter">; briefAsks?: ReadonlySet<string> } | null = null,
 ): Record<string, unknown> {
   const own = (facts?.scripts ?? []).filter((s) => s.outcome === engine.outcome).sort((a, b) => (a.dynasty < b.dynasty ? -1 : a.dynasty > b.dynasty ? 1 : 0));
   if (!facts || own.length === 0) return { brief, engine: { outcome: engine.outcome, makes: engine.label } };
@@ -213,7 +216,7 @@ export function engineStrategyState(
       makes: engine.label,
       scripts: own.map((s) => ({ script: s.dynasty, does: s.description })),
       whatEachOptionRuns: Object.fromEntries(
-        facts.options.map((o) => [o.name, engineOptionEffect(engine.outcome, own, o.strategyId ? (facts.c.strategies.get(o.strategyId) ?? null) : null, facts.c)]),
+        facts.options.map((o) => [o.name, engineOptionEffect(engine.outcome, own, o.strategyId ? (facts.c.strategies.get(o.strategyId) ?? null) : null, facts.c, facts.briefAsks)]),
       ),
     },
   };

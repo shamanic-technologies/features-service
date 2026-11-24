@@ -68,14 +68,14 @@ describe("an opt-in script tactic (OUTREACH-3WAYS-1121)", () => {
     expect(r.keptDynasties).toEqual(["dy_find_buyers"]);
     const inv = r.scripts.find((s) => s.dynasty === "dy_find_investors")!;
     expect(inv.kept).toBe(false);
-    expect(inv.reason).toContain(`only a campaign asking for them may reach ("${INVESTORS}")`);
+    expect(inv.reason).toContain(`runs only for a campaign whose brief asks for "${INVESTORS}"`);
   });
 
   it("a strategy not naming it rules it out (a buyer campaign never reaches the investors)", () => {
     // Excludes « fresh »: the buyer finder is out by that rule, the investor finder by the opt-in rule, never kept.
     const ex = scriptsKeptByStrategy(finders, freshNoDecided, optInCatalogue);
     expect(ex.keptDynasties).toEqual([]);
-    expect(ex.scripts.find((s) => s.dynasty === "dy_find_investors")!.reason).toContain("does not ask for");
+    expect(ex.scripts.find((s) => s.dynasty === "dy_find_investors")!.reason).toContain("brief does not");
     expect(scriptsKeptByStrategy(finders, freshOnly, optInCatalogue).keptDynasties).toEqual(["dy_find_buyers"]);
     // Asking for investors keeps the investors only: the peer script stays out.
     expect(scriptsKeptByStrategy(finders, askInvestors, optInCatalogue).scripts.find((s) => s.dynasty === "dy_find_peers")!.kept).toBe(false);

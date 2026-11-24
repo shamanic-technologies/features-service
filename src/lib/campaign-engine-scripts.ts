@@ -19,6 +19,7 @@ import type { PlayCatalogue, Strategy, Tactic } from "./plays.js";
 import { strategyOnEngine } from "./plays.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
+import { briefAsksByEngine, type StoredBriefAsk } from "./brief-opt-in.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
 import { llmTacticsOf, templateTacticsOf, type ScriptLlmTactic, type ScriptTemplateTactic } from "./script-engine-board.js";
 import { engineOfDynasty, pickScript, scriptRatings, type OutcomeValue, type ReachGroup, type ScriptPick, type ScriptRating } from "./script-value-rating.js";
@@ -123,6 +124,8 @@ export function campaignEngineScripts(input: {
   target: string | null;
   /** The campaign's stored strategy per Engine (`campaign_engine_strategies`): read on the Engines it uses, never a reason to list one. */
   stored: readonly Pick<StoredEngineStrategy, "outcome" | "strategyId" | "campaignId">[];
+  /** STORED answers of what the campaign's brief asks for (opt-in tactics per Engine, `lib/brief-opt-in.ts`); never asked here. */
+  briefAsks?: readonly Pick<StoredBriefAsk, "outcome" | "tacticId" | "asks">[];
   /** The Engines the runner asked a strategy for, for this campaign's units (`campaign_engine_answers`). */
   asked: readonly string[];
   runnable: readonly RunnableScript[];
@@ -141,6 +144,7 @@ export function campaignEngineScripts(input: {
   const lastDay = new Map<string, string>();
   for (const g of input.campaignGroups) if (g.runs > 0 && g.day > (lastDay.get(g.scriptDynasty) ?? "")) lastDay.set(g.scriptDynasty, g.day);
   const storedByOutcome = new Map(input.stored.map((s) => [s.outcome, s]));
+  const briefAsks = briefAsksByEngine(input.briefAsks ?? []);
   // The Engines the campaign USES: its Target's, those the runner asked for it, those its runs ran. A stored verdict alone
   // lists nothing (the S6 migration carried one onto every Engine of the funnel, most never asked since: prod 2026-11-16,
   // 65dc0617 listed Email found, Message sent and Booking call with no script competing).
@@ -165,7 +169,7 @@ export function campaignEngineScripts(input: {
         ]
       : [];
     const scripts = input.runnable.filter((s) => s.outcome === outcome);
-    const kept = scriptsKeptByStrategy(scripts, strategy, input.catalogue as PlayCatalogue);
+    const kept = scriptsKeptByStrategy(scripts, strategy, input.catalogue as PlayCatalogue, null, briefAsks.get(outcome));
     const keptKeys = kept.keptDynasties.map((d) => `${outcome}/${d}`);
     const counts = new Map<string, number>(keptKeys.map((k) => [k, 0]));
     let basis: ScriptPick["basis"] = "no_candidate";

@@ -71,6 +71,8 @@ import { computeEngineReplay, drivesOfCampaign, engineMemos, engineShadowOfCampa
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { scriptsOnPipeOf } from "../lib/script-strategy.js";
 import { askJev as askEngineJev, labelOfOutcome, listEngineStrategies, writeEngineStrategy } from "../lib/engine-strategy-io.js";
+import { listBriefAsks } from "../lib/brief-opt-in-store.js";
+import { briefAsksByCampaignEngine } from "../lib/brief-opt-in.js";
 import { carriedOntoRewrite, engineStrategyOptions, engineStrategyState } from "../lib/engine-strategy.js";
 import { keepOnlyDrives, readDrives, writeDrive, type EngineDriveRow } from "../lib/engine-drive-store.js";
 import { enginePicksOf } from "../lib/engine-picks.js";
@@ -606,8 +608,8 @@ async function refreshEngineDrives(campaigns: readonly ShadowCampaign[], bodies:
   const stored = new Map((await readDrives()).map((d) => [d.unitCampaignId, d]));
   // MON-ENGINE-PICK-1111: the runnable scripts and the stored strategies, once per pass. A failed read throws: the stored
   // drives and the Monitoring cells stand (never "no Engine pick" because a read failed).
-  const [scripts, strategies, playCatalogue] = await Promise.all([readRunnableScripts(), listEngineStrategies(null), loadPlayCatalogue()]);
-  const scriptsOf = scriptsOnPipeOf(scripts, strategies, playCatalogue);
+  const [scripts, strategies, playCatalogue, briefAsks] = await Promise.all([readRunnableScripts(), listEngineStrategies(null), loadPlayCatalogue(), listBriefAsks(null)]);
+  const scriptsOf = scriptsOnPipeOf(scripts, strategies, playCatalogue, briefAsksByCampaignEngine(briefAsks));
   const failed = new Set<string>();
   const results = await mapWithConcurrency([...campaigns.keys()], CAMPAIGN_CONCURRENCY, async (i) => {
     const c = campaigns[i]!;

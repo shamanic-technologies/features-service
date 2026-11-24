@@ -44,8 +44,8 @@ export interface Tactic {
   decidedByFields?: string[] | null;
   /**
    * OPT-IN (OUTREACH-3WAYS-1121, migration 0082): a script judged YES on it serves people who are not the offer's buyers
-   * (the brand's investors, its industry peers): it is kept ONLY for a campaign whose strategy REQUIRES this tactic, and
-   * ruled out everywhere else (no strategy, no brief, a strategy not naming it). Script tactics only. Absent = false.
+   * (the brand's investors, its industry peers): it is kept ONLY for a campaign whose strategy REQUIRES this tactic or
+   * whose brief asks for it (`lib/brief-opt-in.ts`), and ruled out everywhere else. Script tactics only. Absent = false.
    */
   optIn?: boolean;
 }
@@ -137,8 +137,9 @@ export function optInTacticsOnEngine(engineScripts: ReadonlyArray<{ tactics: Rec
 /**
  * PURE (OUTREACH-3WAYS-1121, owner rule: a script serving people who are not the offer's buyers runs ONLY where the
  * campaign asks for them). Why a script is ruled out by an opt-in tactic, or null. `asked` = the tactic ids the
- * campaign's strategy REQUIRES (none without a strategy). A script judged yes on an opt-in tactic the strategy does not
- * require is out. A script judged on NOTHING yet (a brand-new dynasty: no verdict on any tactic) is out too until the
+ * campaign ASKS for: those its strategy REQUIRES (none without a strategy) and those its BRIEF asks for directly
+ * (PLAN-RECURSIVE-PER-ENGINE-1124-SOURCES, `lib/brief-opt-in.ts`). A script judged yes on an opt-in tactic the campaign
+ * does not ask for is out; the reason reads right for ANY opt-in tactic (who a script reaches, or how it works). A script judged on NOTHING yet (a brand-new dynasty: no verdict on any tactic) is out too until the
  * sweep judges it (<= 15 min), so a new population script never runs on a buyer campaign in its first minutes; a script
  * judged on other tactics but not yet on a NEW opt-in tactic stays in (existing scripts keep running while it is judged).
  */
@@ -146,8 +147,8 @@ export function optInRefusal(optIns: readonly Tactic[], asked: ReadonlySet<strin
   for (const t of optIns) {
     if (asked.has(t.id)) continue;
     const v = verdicts?.get(t.id);
-    if (v === true) return `this script serves people only a campaign asking for them may reach ("${t.name}"), and this campaign's strategy does not ask for "${t.name}"`;
-    if (v === undefined && (!verdicts || verdicts.size === 0)) return `this script is not judged yet on "${t.name}", which only a campaign asking for it may run: kept out until judged`;
+    if (v === true) return `this script runs only for a campaign whose brief asks for "${t.name}", and this campaign's brief does not`;
+    if (v === undefined && (!verdicts || verdicts.size === 0)) return `this script is not judged yet on "${t.name}", which runs only for a campaign whose brief asks for it: kept out until judged`;
   }
   return null;
 }

@@ -350,3 +350,14 @@ vi.mock("./lib/ledger-audience-stats.js", async (importOriginal) => ({
 vi.mock("./lib/fleet-contacted-entry-rates.js", () => ({
   readFleetContactedEntryRates: vi.fn(async () => ({})),
 }));
+
+/**
+ * Suite-wide default: what campaigns' briefs ask for (lib/brief-opt-in-store.ts) is a Postgres table. Here nothing is
+ * stored and a write is a no-op: every read-only path sees no ask, the state before the table existed. Suites about the
+ * brief asks (`routes/brief-opt-in.test.ts`) swap in their own store.
+ */
+vi.mock("./lib/brief-opt-in-store.js", () => ({
+  readBriefAsks: vi.fn(async () => []),
+  listBriefAsks: vi.fn(async () => []),
+  writeBriefAsks: vi.fn(async () => undefined),
+}));
