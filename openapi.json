@@ -56817,10 +56817,35 @@
     },
     "/internal/engine-strategies/carried-reask": {
       "get": {
-        "summary": "Carried per-Engine verdicts a judged-row reading would re-ask, nothing asked or stored (internal, api-key, staff)",
-        "description": "PLAN-RECURSIVE-PER-ENGINE-1124. A `carried` verdict stands while its brief is unchanged, whatever the Engine's options: a strategy created after it is never offered to its campaign. One row per carried verdict whose stored options signature is null or differs from today's. A dry read: no judge call, no write, no change to the rule.",
+        "summary": "Carried per-Engine verdicts a judged-row reading would re-ask, nothing stored; `?judge=dry` asks the judge what each would become (internal, api-key, staff)",
+        "description": "PLAN-RECURSIVE-PER-ENGINE-1124. A `carried` verdict stands while its brief is unchanged, whatever the Engine's options: a strategy created after it is never offered to its campaign. One row per carried verdict whose stored options signature is null or differs from today's. A dry read: no judge call, no write, no change to the rule. With `judge=dry` (opt-in; absent = the same body as before, no judge call), each listed row that would call the judge is asked of the judge the live read asks, on the campaign's brief of today, as a staff experiment: `dryJudge` serves the pick beside the stored verdict and the script dynasties that would stop or start being kept. Still nothing stored, no campaign changes what it runs.",
         "tags": [
           "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "dry"
+              ],
+              "description": "`dry` = also ask the judge for each row that would call it (at most 100 rows per request, else 422). Any other value = 400 `judge_unrecognised`."
+            },
+            "required": false,
+            "description": "`dry` = also ask the judge for each row that would call it (at most 100 rows per request, else 422). Any other value = 400 `judge_unrecognised`.",
+            "name": "judge",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "With `judge=dry`: comma-separated campaign ids, only their rows are judged. The measured rows stay whole."
+            },
+            "required": false,
+            "description": "With `judge=dry`: comma-separated campaign ids, only their rows are judged. The measured rows stay whole.",
+            "name": "campaignIds",
+            "in": "query"
+          }
         ],
         "responses": {
           "200": {
@@ -56942,6 +56967,192 @@
                           "wouldCallJudge"
                         ]
                       }
+                    },
+                    "dryJudge": {
+                      "type": "object",
+                      "properties": {
+                        "stored": {
+                          "type": "boolean",
+                          "description": "Always false: the dry judge stores no verdict."
+                        },
+                        "maxJudgeCalls": {
+                          "type": "number",
+                          "description": "The most rows one request may judge."
+                        },
+                        "campaignIds": {
+                          "type": "array",
+                          "nullable": true,
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The campaigns the ask was narrowed to; null = every listed row that would call the judge."
+                        },
+                        "rowsAsked": {
+                          "type": "number",
+                          "description": "Listed rows that would call the judge (after `campaignIds`)."
+                        },
+                        "rowsJudged": {
+                          "type": "number",
+                          "description": "Rows the judge answered."
+                        },
+                        "rowsChanging": {
+                          "type": "number",
+                          "description": "Judged rows whose pick is not the stored strategy."
+                        },
+                        "campaignsChanging": {
+                          "type": "number"
+                        },
+                        "runningCampaignsChanging": {
+                          "type": "number",
+                          "description": "Of those campaigns, the ones with a unit running today."
+                        },
+                        "rowsFailed": {
+                          "type": "number",
+                          "description": "Rows whose brief or judge could not be read: counted apart, in no changing nor unchanged figure."
+                        },
+                        "rowsNoBriefToday": {
+                          "type": "number",
+                          "description": "Rows whose campaign states no brief today: the verdict stands under either rule, the judge is not asked."
+                        },
+                        "rows": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "campaignId": {
+                                "type": "string"
+                              },
+                              "orgId": {
+                                "type": "string"
+                              },
+                              "outcome": {
+                                "type": "string"
+                              },
+                              "campaignRunning": {
+                                "type": "boolean",
+                                "nullable": true,
+                                "description": "A unit of the campaign runs today. Null = campaign-service lists no unit for it."
+                              },
+                              "stored": {
+                                "type": "object",
+                                "properties": {
+                                  "strategyId": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "Null = no condition."
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "Null = a strategy the catalogue no longer holds."
+                                  }
+                                },
+                                "required": [
+                                  "strategyId",
+                                  "name"
+                                ]
+                              },
+                              "dryPick": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "strategyId": {
+                                    "type": "string",
+                                    "nullable": true,
+                                    "description": "Null = no condition."
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "required": [
+                                  "strategyId",
+                                  "name"
+                                ],
+                                "description": "What the judge picks today. Null = not judged (see status)."
+                              },
+                              "confidence": {
+                                "type": "number",
+                                "nullable": true
+                              },
+                              "model": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "The judge's model release; `single_option` = one option, kept with no call."
+                              },
+                              "briefMovedSinceVerdict": {
+                                "type": "boolean",
+                                "nullable": true,
+                                "description": "True = the brief moved since the verdict: the live read re-asks this row at its next run whatever the rule. Null = brief unread."
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "judged",
+                                  "no_brief_today",
+                                  "failed"
+                                ]
+                              },
+                              "changes": {
+                                "type": "boolean",
+                                "nullable": true,
+                                "description": "The pick is not the stored strategy. Null = unknown (status failed), never read as unchanged."
+                              },
+                              "stopsBeingKept": {
+                                "type": "array",
+                                "nullable": true,
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Script dynasties the Engine keeps under the stored strategy and not under the pick. Null = unknown."
+                              },
+                              "startsBeingKept": {
+                                "type": "array",
+                                "nullable": true,
+                                "items": {
+                                  "type": "string"
+                                },
+                                "description": "Script dynasties kept under the pick and not under the stored strategy. Null = unknown."
+                              },
+                              "error": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "campaignId",
+                              "orgId",
+                              "outcome",
+                              "campaignRunning",
+                              "stored",
+                              "dryPick",
+                              "confidence",
+                              "model",
+                              "briefMovedSinceVerdict",
+                              "status",
+                              "changes",
+                              "stopsBeingKept",
+                              "startsBeingKept",
+                              "error"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "stored",
+                        "maxJudgeCalls",
+                        "campaignIds",
+                        "rowsAsked",
+                        "rowsJudged",
+                        "rowsChanging",
+                        "campaignsChanging",
+                        "runningCampaignsChanging",
+                        "rowsFailed",
+                        "rowsNoBriefToday",
+                        "rows"
+                      ],
+                      "description": "Present only with `judge=dry`."
                     }
                   },
                   "required": [
@@ -56957,6 +57168,12 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "judge_unrecognised"
+          },
+          "422": {
+            "description": "too_many_judge_calls: more rows to judge than one request may ask, nothing asked; narrow with campaignIds"
           },
           "502": {
             "description": "carried_verdicts_unreadable"

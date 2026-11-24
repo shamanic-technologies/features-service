@@ -1106,6 +1106,28 @@ export const campaignEngineStrategies = pgTable(
 export type CampaignEngineStrategyRow = typeof campaignEngineStrategies.$inferSelect;
 
 /**
+ * PLAN-RECURSIVE-PER-ENGINE-1124-SOURCES (migration 0084): what a campaign's BRIEF asks for, per Engine x opt-in script
+ * tactic (`lib/brief-opt-in.ts`). One Jev yes/no per row, stored with the brief hash and the tactic description judged;
+ * re-asked when either moves. Read beside the campaign's strategy wherever `optInRefusal` is.
+ */
+export const campaignBriefOptInAsks = pgTable(
+  "campaign_brief_opt_in_asks",
+  {
+    campaignId: text("campaign_id").notNull(),
+    outcome: text("outcome").notNull(),
+    tacticId: text("tactic_id").notNull(),
+    orgId: text("org_id").notNull(),
+    asks: boolean("asks").notNull(),
+    probability: doublePrecision("probability").notNull(),
+    model: text("model").notNull(),
+    briefHash: text("brief_hash").notNull(),
+    judgedDescription: text("judged_description").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "campaign_brief_opt_in_asks_pk", columns: [table.campaignId, table.outcome, table.tacticId] })],
+);
+
+/**
  * CAMPAIGN-CHANGE-LOG-1119 (migration 0080): every change of the strategy kept per (unit campaign, Engine), appended by
  * `writeEngineStrategy` when the kept strategy moves (a re-judgement keeping the same one is no row). Append-only;
  * before 0080 = not recorded.

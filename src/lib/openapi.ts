@@ -6694,10 +6694,16 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/internal/engine-strategies/carried-reask",
-  summary: "Carried per-Engine verdicts a judged-row reading would re-ask, nothing asked or stored (internal, api-key, staff)",
+  summary: "Carried per-Engine verdicts a judged-row reading would re-ask, nothing stored; `?judge=dry` asks the judge what each would become (internal, api-key, staff)",
   description:
-    "PLAN-RECURSIVE-PER-ENGINE-1124. A `carried` verdict stands while its brief is unchanged, whatever the Engine's options: a strategy created after it is never offered to its campaign. One row per carried verdict whose stored options signature is null or differs from today's. A dry read: no judge call, no write, no change to the rule.",
+    "PLAN-RECURSIVE-PER-ENGINE-1124. A `carried` verdict stands while its brief is unchanged, whatever the Engine's options: a strategy created after it is never offered to its campaign. One row per carried verdict whose stored options signature is null or differs from today's. A dry read: no judge call, no write, no change to the rule. With `judge=dry` (opt-in; absent = the same body as before, no judge call), each listed row that would call the judge is asked of the judge the live read asks, on the campaign's brief of today, as a staff experiment: `dryJudge` serves the pick beside the stored verdict and the script dynasties that would stop or start being kept. Still nothing stored, no campaign changes what it runs.",
   tags: ["Internal"],
+  request: {
+    query: z.object({
+      judge: z.enum(["dry"]).optional().describe("`dry` = also ask the judge for each row that would call it (at most 100 rows per request, else 422). Any other value = 400 `judge_unrecognised`."),
+      campaignIds: z.string().optional().describe("With `judge=dry`: comma-separated campaign ids, only their rows are judged. The measured rows stay whole."),
+    }),
+  },
   responses: {
     200: {
       description: "The carried verdicts",
@@ -6728,10 +6734,45 @@ registry.registerPath({
                 wouldCallJudge: z.boolean(),
               }),
             ),
+            dryJudge: z
+              .object({
+                stored: z.boolean().describe("Always false: the dry judge stores no verdict."),
+                maxJudgeCalls: z.number().describe("The most rows one request may judge."),
+                campaignIds: z.array(z.string()).nullable().describe("The campaigns the ask was narrowed to; null = every listed row that would call the judge."),
+                rowsAsked: z.number().describe("Listed rows that would call the judge (after `campaignIds`)."),
+                rowsJudged: z.number().describe("Rows the judge answered."),
+                rowsChanging: z.number().describe("Judged rows whose pick is not the stored strategy."),
+                campaignsChanging: z.number(),
+                runningCampaignsChanging: z.number().describe("Of those campaigns, the ones with a unit running today."),
+                rowsFailed: z.number().describe("Rows whose brief or judge could not be read: counted apart, in no changing nor unchanged figure."),
+                rowsNoBriefToday: z.number().describe("Rows whose campaign states no brief today: the verdict stands under either rule, the judge is not asked."),
+                rows: z.array(
+                  z.object({
+                    campaignId: z.string(),
+                    orgId: z.string(),
+                    outcome: z.string(),
+                    campaignRunning: z.boolean().nullable().describe("A unit of the campaign runs today. Null = campaign-service lists no unit for it."),
+                    stored: z.object({ strategyId: z.string().nullable().describe("Null = no condition."), name: z.string().nullable().describe("Null = a strategy the catalogue no longer holds.") }),
+                    dryPick: z.object({ strategyId: z.string().nullable().describe("Null = no condition."), name: z.string().nullable() }).nullable().describe("What the judge picks today. Null = not judged (see status)."),
+                    confidence: z.number().nullable(),
+                    model: z.string().nullable().describe("The judge's model release; `single_option` = one option, kept with no call."),
+                    briefMovedSinceVerdict: z.boolean().nullable().describe("True = the brief moved since the verdict: the live read re-asks this row at its next run whatever the rule. Null = brief unread."),
+                    status: z.enum(["judged", "no_brief_today", "failed"]),
+                    changes: z.boolean().nullable().describe("The pick is not the stored strategy. Null = unknown (status failed), never read as unchanged."),
+                    stopsBeingKept: z.array(z.string()).nullable().describe("Script dynasties the Engine keeps under the stored strategy and not under the pick. Null = unknown."),
+                    startsBeingKept: z.array(z.string()).nullable().describe("Script dynasties kept under the pick and not under the stored strategy. Null = unknown."),
+                    error: z.string().nullable(),
+                  }),
+                ),
+              })
+              .optional()
+              .describe("Present only with `judge=dry`."),
           }),
         },
       },
     },
+    400: { description: "judge_unrecognised" },
+    422: { description: "too_many_judge_calls: more rows to judge than one request may ask, nothing asked; narrow with campaignIds" },
     502: { description: "carried_verdicts_unreadable" },
   },
 });

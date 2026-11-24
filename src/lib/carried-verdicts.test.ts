@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { carriedVerdictsToReask } from "./carried-verdicts.js";
+import { carriedDryRow, carriedDryTotals, carriedVerdictsToReask } from "./carried-verdicts.js";
 import { engineStrategyNeed, engineStrategyOptions, optionsSignatureOf, type StoredEngineStrategy } from "./engine-strategy.js";
 import { writerSubjectKey, type Strategy, type Tactic } from "./plays.js";
 import type { RunnableScript } from "./script-catalogue-client.js";
@@ -78,5 +78,59 @@ describe("carriedVerdictsToReask", () => {
   it("measures the gap and leaves the rule alone: today a carried row stands whatever its options", () => {
     expect(engineStrategyNeed({ briefHash: "h", optionsSignature: null, source: "carried" }, "h", today("signup"))).toBe("stored");
     expect(engineStrategyNeed({ briefHash: "h", optionsSignature: "older", source: "judge" }, "h", today("signup"))).toBe("ask");
+  });
+});
+
+/** The opt-in `?judge=dry`: what the judge would keep today beside the carried verdict, and the scripts that would move. */
+describe("carriedDryRow", () => {
+  const listed = carriedVerdictsToReask([row({})], scripts, catalogue).rows[0]!;
+  const facts = { running: true, briefMovedSinceVerdict: false };
+
+  it("a pick of another strategy changes the verdict and names the script dynasties that stop and start being kept", () => {
+    const r = carriedDryRow(listed, { kind: "picked", strategyId: "through-threads-posts", confidence: 0.97, model: "m-1" }, facts, scripts, catalogue);
+    expect(r).toEqual({
+      campaignId: "c1",
+      orgId: "org-1",
+      outcome: "signup",
+      campaignRunning: true,
+      stored: { strategyId: null, name: "No condition" },
+      dryPick: { strategyId: "through-threads-posts", name: "Through Threads posts" },
+      confidence: 0.97,
+      model: "m-1",
+      briefMovedSinceVerdict: false,
+      status: "judged",
+      changes: true,
+      // No condition never keeps an opt-in script; the strategy asking for it keeps only that one.
+      stopsBeingKept: ["dy_signup_path"],
+      startsBeingKept: ["dy_signup_threads_post"],
+      error: null,
+    });
+  });
+
+  it("the same pick changes nothing, and lists no script", () => {
+    const r = carriedDryRow(listed, { kind: "picked", strategyId: null, confidence: 0.8, model: "m-1" }, facts, scripts, catalogue);
+    expect([r.status, r.changes, r.dryPick, r.stopsBeingKept, r.startsBeingKept]).toEqual(["judged", false, { strategyId: null, name: "No condition" }, [], []]);
+  });
+
+  it("a judge that failed is never an unchanged verdict: no pick, changes unknown, its error", () => {
+    const r = carriedDryRow(listed, { kind: "failed", error: "chat-service platform-judgments 503" }, { running: null, briefMovedSinceVerdict: null }, scripts, catalogue);
+    expect([r.status, r.changes, r.dryPick, r.confidence, r.stopsBeingKept, r.startsBeingKept, r.error]).toEqual(["failed", null, null, null, null, null, "chat-service platform-judgments 503"]);
+  });
+
+  it("a campaign stating no brief today keeps its verdict under either rule: not judged, unchanged", () => {
+    const r = carriedDryRow(listed, { kind: "no_brief_today" }, facts, scripts, catalogue);
+    expect([r.status, r.changes, r.dryPick, r.confidence]).toEqual(["no_brief_today", false, null, null]);
+  });
+
+  it("a stored strategy the catalogue lost: the change is said, the scripts it kept cannot be", () => {
+    const gone = carriedVerdictsToReask([row({ strategyId: "gone" })], scripts, catalogue).rows[0]!;
+    const r = carriedDryRow(gone, { kind: "picked", strategyId: null, confidence: 0.6, model: "m-1" }, facts, scripts, catalogue);
+    expect([r.stored, r.changes, r.stopsBeingKept, r.startsBeingKept, r.error]).toEqual([{ strategyId: "gone", name: null }, true, null, null, "stored_strategy_not_in_catalogue"]);
+  });
+
+  it("totals count judged, changing and failed rows, and each changing campaign once", () => {
+    const pick = (campaignId: string, outcome: string, strategyId: string | null) => carriedDryRow({ ...listed, campaignId, outcome }, { kind: "picked", strategyId, confidence: 0.9, model: "m" }, { running: campaignId !== "c2", briefMovedSinceVerdict: false }, scripts, catalogue);
+    const rows = [pick("c1", "signup", "through-threads-posts"), pick("c1", "message_sent", "through-threads-posts"), pick("c2", "signup", "through-threads-posts"), pick("c3", "signup", null), carriedDryRow({ ...listed, campaignId: "c4" }, { kind: "failed", error: "x" }, facts, scripts, catalogue), carriedDryRow({ ...listed, campaignId: "c5" }, { kind: "no_brief_today" }, facts, scripts, catalogue)];
+    expect(carriedDryTotals(rows)).toEqual({ rowsAsked: 6, rowsJudged: 4, rowsChanging: 3, campaignsChanging: 2, runningCampaignsChanging: 1, rowsFailed: 1, rowsNoBriefToday: 1 });
   });
 });

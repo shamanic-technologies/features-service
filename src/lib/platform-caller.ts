@@ -57,6 +57,24 @@ export const ENGINE_STRATEGY_SUPPORT: PlatformSupport = {
   reason: "features-service brief judge: keeps the strategy a campaign's brief asks for on one Engine, judged once per brief and stored, produces no outcome",
 };
 
+/**
+ * PLAN-RECURSIVE-PER-ENGINE-1124: the same brief judge asked DRY by staff (`carried-reask?judge=dry`): what a carried
+ * verdict would become if re-asked, nothing stored. Passed to `askJev` by `routes/carried-verdicts.ts` only.
+ */
+export const CARRIED_DRY_JUDGE_SUPPORT: PlatformSupport = {
+  kind: "staff_experiment",
+  reason: "features-service carried verdicts dry judge: staff asks what the brief judge would keep today on a carried verdict, nothing stored, produces no outcome",
+};
+
+/**
+ * PLAN-RECURSIVE-PER-ENGINE-1124-SOURCES: beside the strategy judge, in the same pass: does the campaign's brief ask for
+ * an opt-in script tactic on one Engine (one yes/no per tactic, stored). Default of `askBriefOptIns`.
+ */
+export const BRIEF_OPT_IN_SUPPORT: PlatformSupport = {
+  kind: "product_feature",
+  reason: "features-service brief judge: says whether a campaign's brief asks for an opt-in script tactic on one Engine, judged once per brief and stored, produces no outcome",
+};
+
 /** HUMAN-BRIEF-1121: writes a campaign's brief in plain words (onboarding prefill, rewrite of a robot-shaped brief we wrote). */
 export const HUMAN_BRIEF_SUPPORT: PlatformSupport = {
   kind: "product_feature",
