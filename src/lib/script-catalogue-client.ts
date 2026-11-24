@@ -19,6 +19,8 @@ export interface RunnableScript {
   description: string;
   tactics: Record<string, unknown>;
   code: string;
+  /** The outcomes its code must be HANDED (workflow-service reads them off the code); absent = not served on the row. */
+  materials?: string[];
 }
 
 /** PURE: the key a script dynasty is judged and kept on (`<outcome>/<dynasty>`, workflow-service's own spelling). */
@@ -41,6 +43,7 @@ export function parseRunnableScript(r: Record<string, unknown>): RunnableScript 
     description: typeof r.description === "string" ? r.description : "",
     tactics: r.tactics && typeof r.tactics === "object" && !Array.isArray(r.tactics) ? (r.tactics as Record<string, unknown>) : {},
     code: r.code,
+    ...(Array.isArray(r.materials) ? { materials: r.materials.filter((m): m is string => typeof m === "string" && m !== "") } : {}),
   };
 }
 
