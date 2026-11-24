@@ -6624,6 +6624,117 @@ registry.registerPath({
     503: { description: "script_rating_not_built_yet" },
   },
 });
+const PlanTreeNodeSchema = z.object({
+  id: z.string().describe("The Engines from the Target to this one, `>`-joined: unique in the tree."),
+  parentId: z.string().nullable().describe("The node whose picked script needs this Engine's outcome; null on the Target."),
+  depth: z.number().describe("0 = the Target."),
+  outcome: z.string().describe("The Engine: the outcome its scripts make."),
+  label: z.string(),
+  isTarget: z.boolean(),
+  neededByScript: z.string().nullable().describe("`<outcome>/<dynasty>` of the parent's picked script; null on the Target."),
+  strategyState: z.enum(["kept", "no_condition", "not_judged_yet"]).describe("`kept` = the campaign's brief keeps a strategy on this Engine; `no_condition` = judged, no condition; `not_judged_yet` = the campaign holds no stored verdict on this Engine (this read never asks the judge: the Engine runner judges the brief on its first run here; until then every runnable script competes, opt-in scripts left out)."),
+  strategy: z.object({ id: z.string(), name: z.string(), description: z.string() }).nullable(),
+  rules: z.array(z.object({ kind: z.enum(["requires", "excludes"]), tacticId: z.string(), name: z.string(), clientLine: z.string().nullable() })).describe("What the strategy requires and excludes of a script on this Engine, in words."),
+  drawRule: z.enum(["what_runs_led_to_per_cost", "what_runs_led_to", "cheapest_per_run", "no_script"]).describe("How today's draws choose among the kept scripts."),
+  picked: z.string().nullable().describe("The script the Plan goes through on this Engine: the one today's draws pick most among the kept. Null = none (see `endReason`)."),
+  scripts: z
+    .array(
+      z.object({
+        script: z.string().describe("`<outcome>/<dynasty>`."),
+        dynasty: z.string(),
+        name: z.string().nullable(),
+        version: z.number(),
+        description: z.string().nullable(),
+        shareOfDrawsPct: z.number().describe("Share of today's draws among the kept scripts of this Engine, 0..100 (they add to ~100)."),
+        picked: z.boolean(),
+        needs: z.array(z.string()).describe("The outcomes one run of the script needs: handed to it or asked of another Engine. Empty = it needs nothing."),
+      }),
+    )
+    .describe("The runnable scripts the campaign keeps on this Engine, most drawn first."),
+  ruledOut: z
+    .array(z.object({ script: z.string(), dynasty: z.string(), name: z.string().nullable(), version: z.number(), description: z.string().nullable(), reason: z.string().nullable().describe("Why the campaign's strategy rules it out, in words.") }))
+    .describe("The runnable scripts of this Engine the campaign does not run."),
+  endReason: z
+    .enum(["script_needs_nothing", "engine_already_on_path", "no_runnable_script", "strategy_keeps_no_script"])
+    .nullable()
+    .describe("Why nothing follows this node: its picked script needs nothing; this Engine is already on the path from the Target (never expanded twice); no runnable script makes this outcome; the strategy keeps none of its scripts. Null = `needs` lists what follows."),
+  needs: z.array(z.object({ outcome: z.string(), nodeId: z.string() })).describe("One entry per outcome the picked script needs, each naming the node that follows."),
+});
+registry.registerPath({
+  method: "get",
+  path: "/brands/{brandId}/sales-funnel-campaigns/{id}/plan-tree",
+  summary: "A campaign's Plan from its Target down, Engine by Engine (org-scoped)",
+  description:
+    "PLAN-RECURSIVE-PER-ENGINE-1124. From the campaign's Target: at each Engine the strategy the campaign keeps there, the runnable scripts it keeps and those it rules out with the reason, today's share of draws among the kept ones and the script drawn most (the pick), then the same for each outcome that picked script needs, down to a script needing nothing. Nodes are served flat, depth first (`parentId`, `needs[].nodeId`). Read-only: strategies are the campaign's STORED verdicts, never judged on this read. No decision score is served. 503 `script_rating_not_built_yet` while the Rating's first build runs.",
+  tags: ["Sales funnel campaigns"],
+  request: { params: z.object({ brandId: z.string(), id: z.string().describe("The sales funnel campaign id.") }) },
+  responses: {
+    200: {
+      description: "The campaign's Plan tree",
+      content: {
+        "application/json": {
+          schema: z.object({
+            salesFunnelCampaignId: z.string(),
+            brandId: z.string(),
+            target: z.object({ key: z.string(), label: z.string() }).nullable(),
+            ratingComputedAt: z.string().describe("When the Rating the draws read was built."),
+            draws: z.number(),
+            strategiesReadFrom: z.enum(["stored_verdicts"]),
+            unavailableReason: z.enum(["campaign_states_no_target"]).nullable().describe("Why `nodes` is empty; null otherwise."),
+            nodes: z.array(PlanTreeNodeSchema),
+          }),
+        },
+      },
+    },
+    404: { description: "sales_funnel_campaign_not_found | brand_not_found" },
+    502: { description: "campaign_plan_tree_unreadable" },
+    503: { description: "script_rating_not_built_yet" },
+  },
+});
+registry.registerPath({
+  method: "get",
+  path: "/internal/engine-strategies/carried-reask",
+  summary: "Carried per-Engine verdicts a judged-row reading would re-ask, nothing asked or stored (internal, api-key, staff)",
+  description:
+    "PLAN-RECURSIVE-PER-ENGINE-1124. A `carried` verdict stands while its brief is unchanged, whatever the Engine's options: a strategy created after it is never offered to its campaign. One row per carried verdict whose stored options signature is null or differs from today's. A dry read: no judge call, no write, no change to the rule.",
+  tags: ["Internal"],
+  responses: {
+    200: {
+      description: "The carried verdicts",
+      content: {
+        "application/json": {
+          schema: z.object({
+            computedAt: z.string(),
+            carriedRows: z.number(),
+            carriedCampaigns: z.number(),
+            unchangedRows: z.number().describe("Carried rows whose stored signature equals today's."),
+            wouldReaskRows: z.number().describe("Listed rows stored against a brief: re-asked if a carried row were read like a judged one."),
+            wouldReaskCampaigns: z.number(),
+            wouldCallJudgeRows: z.number().describe("Of those, the rows with more than one option today (one option is kept with no judge call)."),
+            rows: z.array(
+              z.object({
+                campaignId: z.string(),
+                orgId: z.string(),
+                outcome: z.string(),
+                storedStrategyId: z.string().nullable().describe("Null = no condition."),
+                storedStrategyName: z.string().nullable(),
+                storedStrategyKnown: z.boolean().describe("False = the catalogue no longer holds the stored strategy."),
+                carriedFrom: z.string().nullable(),
+                judgedAt: z.string(),
+                reason: z.enum(["no_signature_stored", "options_moved"]),
+                optionsToday: z.number().describe("Options the judge would choose among today, no condition included."),
+                otherOptionsToday: z.array(z.object({ strategyId: z.string().nullable(), name: z.string() })),
+                briefStatedAtVerdict: z.boolean().describe("False = stored with no brief: a campaign still stating none keeps its verdict under either rule (today's brief is not read here)."),
+                wouldCallJudge: z.boolean(),
+              }),
+            ),
+          }),
+        },
+      },
+    },
+    502: { description: "carried_verdicts_unreadable" },
+  },
+});
 registry.registerPath({
   method: "get",
   path: "/internal/script-pick",
