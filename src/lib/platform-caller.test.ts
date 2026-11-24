@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { BRIEF_JUDGMENT_SUPPORT, BRIEF_OPT_IN_SUPPORT, CARRIED_DRY_JUDGE_SUPPORT, DRY_BRIEF_SUPPORT, ENGINE_STRATEGY_SUPPORT, HUMAN_BRIEF_SUPPORT, NICHE_GRADE_SUPPORT, ONE_LEG_JUDGMENT_SUPPORT, SUPPORT_FUNCTIONS, TACTIC_JUDGMENT_SUPPORT, type PlatformSupport } from "./platform-caller.js";
+import { BRIEF_JUDGMENT_SUPPORT, BRIEF_OPT_IN_SUPPORT, CARRIED_DRY_JUDGE_SUPPORT, ENGINE_STRATEGY_SUPPORT, HUMAN_BRIEF_SUPPORT, NICHE_GRADE_SUPPORT, ONE_LEG_JUDGMENT_SUPPORT, SUPPORT_FUNCTIONS, TACTIC_JUDGMENT_SUPPORT, type PlatformSupport } from "./platform-caller.js";
 
 // PLATFORM-CALLER-RUN-1024: every call to a chat-service platform route states ONE of its own run (x-run-id) or a
 // support function. Each known call site is pinned to its decided choice; a new call site fails until decided here.
@@ -23,7 +23,7 @@ const DECIDED: Record<string, { constant: string; support: PlatformSupport }> = 
  * default = their own; the callers stating another support function are pinned, call by call, in file order.
  */
 const JUDGE_FILES = ["src/lib/engine-strategy-io.ts", "src/lib/brief-opt-in-io.ts"];
-const JUDGE_CALLERS: Record<string, string[]> = { "src/routes/carried-verdicts.ts": ["CARRIED_DRY_JUDGE_SUPPORT", "DRY_BRIEF_SUPPORT", "DRY_BRIEF_SUPPORT"] };
+const JUDGE_CALLERS: Record<string, string[]> = { "src/routes/carried-verdicts.ts": ["CARRIED_DRY_JUDGE_SUPPORT"] };
 
 function callSiteFiles(): string[] {
   const out = execFileSync("git", ["ls-files", "src"], { encoding: "utf8" });
@@ -63,8 +63,6 @@ describe("platform caller (PLATFORM-CALLER-RUN-1024)", () => {
     expect(passing).toEqual(JUDGE_CALLERS);
     expect(CARRIED_DRY_JUDGE_SUPPORT.kind).toBe("staff_experiment");
     expect(CARRIED_DRY_JUDGE_SUPPORT.reason.length).toBeGreaterThan(10);
-    expect(DRY_BRIEF_SUPPORT.kind).toBe("staff_experiment");
-    expect(DRY_BRIEF_SUPPORT.reason.length).toBeGreaterThan(10);
   });
 
   it("support functions match chat-service's closed set", () => {

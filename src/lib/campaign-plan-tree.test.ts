@@ -115,7 +115,7 @@ describe("campaignPlanTree", () => {
     expect(root.strategyState).toBe("not_judged_yet");
     expect(root.picked).toBe("signup/dy_signup_path");
     expect(root.ruledOut.map((s) => s.script)).toEqual(["signup/dy_signup_threads_post"]);
-    expect(root.ruledOut[0]!.reason).toMatch(/does not ask for "Works through a Threads post"/);
+    expect(root.ruledOut[0]!.reason).toMatch(/whose brief asks for "Works through a Threads post"/);
     expect(outcomesOf(nodes)).toEqual(["signup", "message_sent", "message_written", "llm_completion", "message_sent", "brand_profile"]);
     expect(outcomesOf(nodes)).not.toContain("threads_post_published");
     expect(outcomesOf(nodes)).not.toContain("lead_found");
