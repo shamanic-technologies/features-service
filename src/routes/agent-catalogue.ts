@@ -415,6 +415,8 @@ export interface OfferContext {
    * `before` = the campaign's Target named by the read (`?target=`, GS-STEP11-NO-CAMPAIGN-1122): only the steps before it are checked.
    */
   steps: OfferSteps & { before?: string | null };
+  /** Set when the brand's measured rates were not ready within the read's budget: rates = what the brand stated. */
+  ownRatesUnavailableReason?: "measured_rates_still_computing" | null;
 }
 
 /**
@@ -453,20 +455,60 @@ export async function offerContextFor(offerId: string, brandId: string, ids: { o
   const teamLegs = (await loadChannelCatalogue({ publishedOnly: false })).channels
     .filter((c) => c.operatedBy === "customer")
     .flatMap((c) => c.stepTransitions.filter((t) => t.from !== null).map((t) => ({ fromStep: t.from!.key, toStep: t.to.key })));
-  const [ltr, effective, teamRates, steps] = await Promise.all([
+  // The brand's MEASURED rates (a walk of its leads) and its team's CRM history are time-boxed (AGENT-SIGNUP-UX-1125):
+  // under load a cold walk waited on lead-service's 60 s page timeout and an outside agent's first catalogue read took
+  // 59.5 s. Past the budget the read prices on what the brand STATED (the measured walk keeps running and fills its
+  // cell for the next read) and says so (`ownRatesUnavailableReason`); never a guessed rate.
+  const measuredOwn = Promise.all([getBrandEffectiveRates(brandId, orgId, legEconomics), fetchTeamCrmLegRates(orgId, brandId, teamLegs)]);
+  const [ltr, own, steps] = await Promise.all([
     offerLifetimeRevenue(offer.lifetimeRevenueUsd),
-    getBrandEffectiveRates(brandId, orgId, legEconomics),
-    fetchTeamCrmLegRates(orgId, brandId, teamLegs),
+    withinBudget(measuredOwn, ownRatesBudgetMs()),
     fetchOfferSteps(brandId, offerId, { orgId, userId: ids.userId, runId: ids.runId }),
   ]);
   const rates = new Map<string, { ratePct: number; source: "offer_measured" | "offer_stated" | "offer_team_measured" }>();
-  for (const r of effective.legs) {
-    if (r.effectiveRatePct === null || (r.source !== "measured" && r.source !== "manual")) continue;
-    rates.set(legPairKey(r.fromStep, r.toStep), { ratePct: r.effectiveRatePct, source: r.source === "measured" ? "offer_measured" : "offer_stated" });
+  if (own === OVER_BUDGET) {
+    for (const r of legEconomics.legRates) if (r.stated && r.ratePct !== null) rates.set(legPairKey(r.fromStep, r.toStep), { ratePct: r.ratePct, source: "offer_stated" });
+  } else {
+    const [effective, teamRates] = own;
+    for (const r of effective.legs) {
+      if (r.effectiveRatePct === null || (r.source !== "measured" && r.source !== "manual")) continue;
+      rates.set(legPairKey(r.fromStep, r.toStep), { ratePct: r.effectiveRatePct, source: r.source === "measured" ? "offer_measured" : "offer_stated" });
+    }
+    // A leg the brand's effective rates leave unrated: the team's own history on it (`lib/team-crm-leg-rates.ts`).
+    for (const [leg, r] of teamRates) if (!rates.has(leg) && r.ratePct > 0) rates.set(leg, { ratePct: r.ratePct, source: "offer_team_measured" });
   }
-  // A leg the brand's effective rates leave unrated: the team's own history on it (`lib/team-crm-leg-rates.ts`).
-  for (const [leg, r] of teamRates) if (!rates.has(leg) && r.ratePct > 0) rates.set(leg, { ratePct: r.ratePct, source: "offer_team_measured" });
-  return { offerId, brandId, lifetimeRevenueUsd: ltr.usd, lifetimeRevenueSource: ltr.source, rates, steps };
+  return {
+    offerId,
+    brandId,
+    lifetimeRevenueUsd: ltr.usd,
+    lifetimeRevenueSource: ltr.source,
+    rates,
+    steps,
+    ownRatesUnavailableReason: own === OVER_BUDGET ? "measured_rates_still_computing" : null,
+  };
+}
+
+const OVER_BUDGET = Symbol("over_budget");
+
+/** How long a per-offer read waits on the brand's measured rates before pricing on its stated ones (env, default 4 s). */
+function ownRatesBudgetMs(): number {
+  const n = Number(process.env.OFFER_OWN_RATES_BUDGET_MS);
+  return Number.isFinite(n) && n >= 0 ? n : 4_000;
+}
+
+/** The promise's value if it settles within `ms`, else `OVER_BUDGET` (the promise keeps running; a late failure is logged). A failure inside the budget throws as before. */
+async function withinBudget<T>(p: Promise<T>, ms: number): Promise<T | typeof OVER_BUDGET> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<typeof OVER_BUDGET>((resolve) => {
+    timer = setTimeout(() => resolve(OVER_BUDGET), ms);
+  });
+  try {
+    const out = await Promise.race([p, late]);
+    if (out === OVER_BUDGET) p.catch((err) => console.error(`[features-service] agent catalogue: brand's measured rates failed after the read answered on stated rates: ${(err as Error).message}`));
+    return out;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -490,7 +532,7 @@ const setAsideByStepWire = (m: CatalogueModel, setAside: ReadonlyArray<{ missing
 
 /** The `offer` block a per-offer read answers with (null on the fleet catalogue). */
 const offerEcho = (o: OfferContext | null) =>
-  o ? { offerId: o.offerId, brandId: o.brandId, lifetimeRevenueUsd: o.lifetimeRevenueUsd, lifetimeRevenueSource: o.lifetimeRevenueSource, ownRateLegs: o.rates.size } : null;
+  o ? { offerId: o.offerId, brandId: o.brandId, lifetimeRevenueUsd: o.lifetimeRevenueUsd, lifetimeRevenueSource: o.lifetimeRevenueSource, ownRateLegs: o.rates.size, ownRatesUnavailableReason: o.ownRatesUnavailableReason ?? null } : null;
 
 async function loadModel(offer: Pick<OfferContext, "lifetimeRevenueUsd" | "lifetimeRevenueSource" | "rates"> | null = null): Promise<Loaded> {
   await installPersistedFigures();

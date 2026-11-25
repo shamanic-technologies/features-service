@@ -64505,6 +64505,15 @@
                         "ownRateLegs": {
                           "type": "integer",
                           "description": "Legs priced on the brand's own rate."
+                        },
+                        "ownRatesUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured_rates_still_computing",
+                            null
+                          ],
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -64512,7 +64521,8 @@
                         "brandId",
                         "lifetimeRevenueUsd",
                         "lifetimeRevenueSource",
-                        "ownRateLegs"
+                        "ownRateLegs",
+                        "ownRatesUnavailableReason"
                       ],
                       "description": "Present on a per-offer read only."
                     },
@@ -65287,6 +65297,15 @@
                         "ownRateLegs": {
                           "type": "integer",
                           "description": "Legs priced on the brand's own rate."
+                        },
+                        "ownRatesUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured_rates_still_computing",
+                            null
+                          ],
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -65294,7 +65313,8 @@
                         "brandId",
                         "lifetimeRevenueUsd",
                         "lifetimeRevenueSource",
-                        "ownRateLegs"
+                        "ownRateLegs",
+                        "ownRatesUnavailableReason"
                       ],
                       "description": "Present on a per-offer read only."
                     },
@@ -69459,6 +69479,15 @@
                         "ownRateLegs": {
                           "type": "integer",
                           "description": "Legs priced on the brand's own rate."
+                        },
+                        "ownRatesUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured_rates_still_computing",
+                            null
+                          ],
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -69466,7 +69495,8 @@
                         "brandId",
                         "lifetimeRevenueUsd",
                         "lifetimeRevenueSource",
-                        "ownRateLegs"
+                        "ownRateLegs",
+                        "ownRatesUnavailableReason"
                       ],
                       "description": "Present on a per-offer read only."
                     },
@@ -71379,6 +71409,15 @@
                         "ownRateLegs": {
                           "type": "integer",
                           "description": "Legs priced on the brand's own rate."
+                        },
+                        "ownRatesUnavailableReason": {
+                          "type": "string",
+                          "nullable": true,
+                          "enum": [
+                            "measured_rates_still_computing",
+                            null
+                          ],
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -71386,7 +71425,8 @@
                         "brandId",
                         "lifetimeRevenueUsd",
                         "lifetimeRevenueSource",
-                        "ownRateLegs"
+                        "ownRateLegs",
+                        "ownRatesUnavailableReason"
                       ],
                       "description": "Present on a per-offer read only."
                     },
