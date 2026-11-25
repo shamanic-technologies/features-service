@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
-import { buildPlayCatalogue, type Strategy, type Tactic, type WriterTacticVerdictRow } from "./plays.js";
+import { buildPlayCatalogue, scriptsUnjudgedOnTactic, type Strategy, type Tactic, type WriterTacticVerdictRow } from "./plays.js";
 import { excludedPipeCandidates, scriptsKeptByStrategy, scriptsOnPipeOf } from "./script-strategy.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { engineOptionEffect, engineStrategyOptions } from "./engine-strategy.js";
@@ -85,14 +85,29 @@ describe("an opt-in script tactic (OUTREACH-3WAYS-1121)", () => {
     expect(scriptsKeptByStrategy([writer], null, optInCatalogue).keptDynasties).toEqual(["dy_cold_writer"]);
   });
 
-  it("a brand-new dynasty judged on nothing yet is kept out until judged; one judged on other tactics stays in", () => {
+  it("a script with no verdict on an opt-in tactic is kept out until judged, whatever else it is judged on (OPT-IN-UNJUDGED-1125)", () => {
     const newborn = script("lead_found", "dy_find_newborn", { serve: {} });
     const r = scriptsKeptByStrategy([...finders, newborn], null, optInCatalogue);
     expect(r.scripts.find((s) => s.dynasty === "dy_find_newborn")!.reason).toContain("not judged yet");
-    // Judged on a non-opt-in tactic only (the opt-in ones are new): kept while the sweep judges it.
-    const older = script("lead_found", "dy_find_older", { serve: {} });
-    const c = catalogueOf(true, [verdict(older, FRESH, false)]);
-    expect(scriptsKeptByStrategy([...finders, older], null, c).keptDynasties).toContain("dy_find_older");
+    // The sweep reached another tactic first (prod 2026-11-25: 59 new scripts, one X post no brief asked for): still out.
+    const partial = script("lead_found", "dy_find_partial", { serve: {} });
+    const c = catalogueOf(true, [verdict(partial, FRESH, false)]);
+    const kept = scriptsKeptByStrategy([...finders, partial], null, c);
+    expect(kept.keptDynasties).not.toContain("dy_find_partial");
+    expect(kept.scripts.find((s) => s.dynasty === "dy_find_partial")!.reason).toContain("not judged yet");
+    // Judged no on every opt-in tactic: in.
+    const judged = catalogueOf(true, [verdict(partial, FRESH, false), verdict(partial, INVESTORS, false), verdict(partial, PEERS, false)]);
+    expect(scriptsKeptByStrategy([...finders, partial], null, judged).keptDynasties).toContain("dy_find_partial");
+  });
+
+  it("names the scripts a tactic would gate that are not judged on it yet, only on the Engines deciding its matter", () => {
+    const partial = script("lead_found", "dy_find_partial", { serve: {} });
+    const c = catalogueOf(true, [verdict(partial, FRESH, false)]);
+    const t = c.tactics.get(INVESTORS)!;
+    expect(scriptsUnjudgedOnTactic(t, [...all, partial], c.tacticsByWriter)).toEqual(["lead_found/dy_find_partial"]);
+    expect(scriptsUnjudgedOnTactic(t, all, c.tacticsByWriter)).toEqual([]);
+    // no field stated = every Engine: the writer, judged on nothing of it, is named
+    expect(scriptsUnjudgedOnTactic({ id: INVESTORS, decidedByFields: null }, all, c.tacticsByWriter)).toEqual(["message_written/dy_cold_writer"]);
   });
 
   it("every existing campaign's kept scripts are unchanged while no tactic is opt-in", () => {

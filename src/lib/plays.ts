@@ -148,9 +148,35 @@ export function optInRefusal(optIns: readonly Tactic[], asked: ReadonlySet<strin
     if (asked.has(t.id)) continue;
     const v = verdicts?.get(t.id);
     if (v === true) return `this script runs only for a campaign whose brief asks for "${t.name}", and this campaign's brief does not`;
-    if (v === undefined && (!verdicts || verdicts.size === 0)) return `this script is not judged yet on "${t.name}", which runs only for a campaign whose brief asks for it: kept out until judged`;
+    // OPT-IN-UNJUDGED-1125: no verdict on THIS opt-in tactic = out, whatever else the script is judged on. The sweep
+    // judges a new script one tactic at a time: one judged on another tactic first slipped through every gate (prod
+    // 2026-11-25: 59 new path scripts kept with no condition, one published an X post no brief asked for).
+    if (v === undefined) return `this script is not judged yet on "${t.name}", which runs only for a campaign whose brief asks for it: kept out until judged`;
   }
   return null;
+}
+
+/**
+ * PURE (OPT-IN-UNJUDGED-1125): the runnable scripts a tactic would gate (on the Engines deciding its matter) that hold
+ * NO verdict on it yet, as `<outcome>/<dynasty>`. Since an unjudged script is kept out, a tactic turns opt-in only
+ * once this is empty: else every script of those Engines would stop running until the sweep reaches it.
+ */
+export function scriptsUnjudgedOnTactic<S extends { outcome: string; dynasty: string; tactics: Record<string, unknown> }>(
+  tactic: Pick<Tactic, "id" | "decidedByFields">,
+  scripts: readonly S[],
+  tacticsByWriter: ReadonlyMap<string, ReadonlyMap<string, boolean>>,
+): string[] {
+  const byEngine = new Map<string, S[]>();
+  for (const s of scripts) byEngine.set(s.outcome, [...(byEngine.get(s.outcome) ?? []), s]);
+  const out: string[] = [];
+  for (const own of byEngine.values()) {
+    if (!tacticDecidedOnEngine(tactic, own)) continue;
+    for (const s of own) {
+      const key = `${s.outcome}/${s.dynasty}`;
+      if (tacticsByWriter.get(writerSubjectKey("script", key))?.get(tactic.id) === undefined) out.push(key);
+    }
+  }
+  return [...new Set(out)].sort();
 }
 
 export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[]): Map<string, Map<string, boolean>> {
