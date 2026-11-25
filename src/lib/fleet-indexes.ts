@@ -40,6 +40,8 @@ import { CLIENT_RANGE_HIGH_KEY, CLIENT_RANGE_LOW_KEY, clientMedianRange } from "
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 import type { IndexRow, PooledPipe } from "./fleet-index-vendor.js";
 import { VENDOR_COST_UNKNOWN } from "./public-vendor-cost.js";
+import { SIGNUP_CHAIN_FORMULA } from "./fleet-index-range.js";
+import { MIN_CONSUMED_UNITS } from "./script-value-rating.js";
 
 export type FleetIndexStatus = "robust" | "signal" | "noise";
 export type FleetIndexUnit = "usd" | "percent";
@@ -51,7 +53,7 @@ export const SCEO_FEATURE_SLUG = "sales-cold-email-outreach";
 export const SCEO_WEBSITE_VISIT_LEG = "lead_found_to_website_visit";
 export const SCEO_POSITIVE_REPLY_LEG = "lead_found_to_conversation";
 
-export type FleetIndexOutcome = "website_visit" | "positive_reply" | "meeting_booked" | "engaged_lead";
+export type FleetIndexOutcome = "website_visit" | "positive_reply" | "meeting_booked" | "signup" | "engaged_lead";
 
 export interface FleetIndexDefinition {
   slug: string;
@@ -130,6 +132,16 @@ export const FLEET_INDEXES: readonly FleetIndexDefinition[] = [
     unit: "percent",
     valuePer: "of people emailed",
     method: "The Cold Email Positive Reply Rate Index times the share of positive replies our best AI meeting booking workflow turns into a meeting. Measured on the clients who report their booked meetings to us.",
+  },
+  {
+    slug: "cold-email-cost-per-signup",
+    name: "Cold Email Cost Per Signup Index",
+    ...CHANNEL,
+    outcome: "signup",
+    metric: "cost_per_outcome",
+    unit: "usd",
+    valuePer: "per signup",
+    method: "Our real vendor cost, with no markup, for one person to sign up on a client's site: the Cold Email Cost Per Click Index divided by the share of website visits that led to a signup on our cost ledger.",
   },
   {
     slug: "cold-email-cost-per-engaged-lead",
@@ -258,12 +270,60 @@ export interface FleetIndexInputs {
   /** One entry per client brand (`/public/stats/ranked?groupBy=brand`); null = unreadable, nothing recorded. */
   brandEngagement?: BrandEngagement[] | null;
   /**
+   * The ledger's Website visit -> Signup step (runs-service fleet step rates, OUTCOME-RANGES-1125): the Cost Per Signup
+   * Index. `{ step }` = read (a step the ledger never chained = `consumedUnits` of visits, `ledUnits` 0); null / absent =
+   * unreadable or not read: nothing recorded for it.
+   */
+  visitToSignup?: { step: VisitToSignupStep } | null;
+  /**
    * The best AVAILABLE runnable row stands in while none is mature (`indexPipePick`, PUBLIC-INDEXES-NULL-1117): the live
    * recorder and the scripts' era history set it. Absent / false = the workflow era's rule (mature or null
    * `no_mature_workflow`), kept by its history run so a past day recomputed again never moves.
    */
   bestAvailableStandsIn?: boolean;
 }
+
+/** The ledger's Website visit -> Signup step: consumed visits, and of them the ones whose consuming run made a signup. */
+export interface VisitToSignupStep {
+  consumedUnits: number;
+  ledUnits: number;
+}
+
+/**
+ * PURE. The Cost Per Signup Index point (OUTCOME-RANGES-1125): the Cost Per Click Index (the same pick, same basis) ÷
+ * the ledger's measured share of website visits that led to a signup (`measuredStepShare`'s rule: >= `minConsumed`
+ * consumed visits and >= 1 signup). Always `expected` (a chain of two measures on different populations), status the
+ * weaker of the click's and the signups' own. No click price = its reason; no measured share = null
+ * `visit_to_signup_not_measured`, never a default rate.
+ */
+export function signupCostIndexPoint(click: FleetIndexPoint, step: VisitToSignupStep, minConsumed: number): FleetIndexPoint {
+  const measured = step.consumedUnits >= minConsumed && step.ledUnits > 0;
+  const share = measured ? Math.min(1, step.ledUnits / step.consumedUnits) : null;
+  const inputs: Record<string, number | string | null> = {
+    valueKind: "expected",
+    method: "expected_ledger_chain",
+    formula: SIGNUP_CHAIN_FORMULA,
+    clickIndexValue: click.value,
+    clickOutcomes: click.outcomes,
+    clickValueKind: click.inputs.valueKind === "expected" ? "expected" : "measured",
+    visitsConsumed: step.consumedUnits,
+    visitsLedToSignup: step.ledUnits,
+    visitToSignupPct: share === null ? null : share * 100,
+    minConsumedVisits: minConsumed,
+  };
+  const base = { indexSlug: COST_PER_SIGNUP_SLUG, contacted: null, workflowDynastySlug: click.workflowDynastySlug, workflowDynastyName: click.workflowDynastyName, inputs };
+  if (click.value === null || !(click.value > 0)) return { ...base, value: null, status: "noise", outcomes: 0, unavailableReason: click.unavailableReason ?? "not_measured" };
+  if (share === null) return { ...base, value: null, status: "noise", outcomes: 0, unavailableReason: "visit_to_signup_not_measured" };
+  return {
+    ...base,
+    value: click.value / share,
+    status: weakestStatus(click.status, indexStatus(step.ledUnits, true)),
+    outcomes: Math.min(click.outcomes, step.ledUnits),
+    unavailableReason: null,
+  };
+}
+
+const COST_PER_SIGNUP_SLUG = "cold-email-cost-per-signup";
 
 /** A client brand's lifetime cold email spend and engaged persons. */
 export interface BrandEngagement {
@@ -655,6 +715,7 @@ export function meetingCostIndexPoint(
 }
 
 const COST_PER_INTEREST = fleetIndexBySlug("cold-email-cost-per-positive-reply")!;
+const COST_PER_CLICK = fleetIndexBySlug("cold-email-cost-per-click")!;
 const COST_PER_MEETING = fleetIndexBySlug("cold-email-cost-per-meeting")!;
 const INTEREST_RATE = fleetIndexBySlug("cold-email-positive-reply-rate")!;
 const COST_PER_ENGAGED_LEAD = fleetIndexBySlug("cold-email-cost-per-engaged-lead")!;
@@ -673,6 +734,9 @@ export function computeFleetIndexPoints(inputs: FleetIndexInputs): FleetIndexPoi
       if (p) points.push(p);
     } else if (def.outcome === "meeting_booked" && inputs.positiveReplyRows && inputs.meetingPipe) {
       points.push(meetingPoint(def, inputs.positiveReplyRows, inputs.meetingPipe, standsIn));
+    }
+    if (def.outcome === "signup" && inputs.visitToSignup && inputs.websiteVisitRows) {
+      points.push(signupCostIndexPoint(legPoint(COST_PER_CLICK, inputs.websiteVisitRows, standsIn), inputs.visitToSignup.step, MIN_CONSUMED_UNITS));
     }
     if (def.outcome === "engaged_lead" && inputs.brandEngagement) points.push(engagedLeadPoint(inputs.brandEngagement));
   }
