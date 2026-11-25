@@ -75,6 +75,15 @@ export const BRIEF_OPT_IN_SUPPORT: PlatformSupport = {
   reason: "features-service brief judge: says whether a campaign's brief asks for an opt-in script tactic on one Engine, judged once per brief and stored, produces no outcome",
 };
 
+/**
+ * BRIEF-DAILY-CAP-1125: beside the strategy judge, in the same pass: the most Units of one Engine's outcome the campaign's
+ * brief allows per day, week or month (stored). Sent by `askBriefMostUnits`.
+ */
+export const BRIEF_MOST_UNITS_SUPPORT: PlatformSupport = {
+  kind: "product_feature",
+  reason: "features-service brief judge: reads the most Units per day, week or month a campaign's brief allows on one Engine, judged once per brief and stored, produces no outcome",
+};
+
 /** HUMAN-BRIEF-1121: writes a campaign's brief in plain words (onboarding prefill, rewrite of a robot-shaped brief we wrote). */
 export const HUMAN_BRIEF_SUPPORT: PlatformSupport = {
   kind: "product_feature",

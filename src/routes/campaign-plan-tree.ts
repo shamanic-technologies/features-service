@@ -8,7 +8,8 @@
  * held 60 s), the draws seeded on the campaign and the Rating's build so one build reads the same on every read.
  * READ-ONLY on strategies: an Engine the campaign holds no stored verdict on reads `not_judged_yet` (every runnable
  * script but the opt-in ones compete, the runner's rule under no strategy); this read never asks the brief judge and
- * never writes a verdict; what the brief asks for (opt-in tactics) is the STORED answers too, never asked here. Never a value-per-dollar score. The board not built yet = 503 `script_rating_not_built_yet`.
+ * never writes a verdict; what the brief asks for (opt-in tactics) is the STORED answers too, never asked here; the most Units
+ * the brief allows per Engine (`mostUnits`, BRIEF-DAILY-CAP-1125) likewise. Never a value-per-dollar score. The board not built yet = 503 `script_rating_not_built_yet`.
  */
 import { Router } from "express";
 import { apiKeyAuth, type AuthenticatedRequest } from "../middleware/auth.js";
@@ -19,6 +20,7 @@ import { SCRIPT_ENGINES_CELL } from "../lib/engine-favourites.js";
 import { listEngineStrategies, labelOfOutcome } from "../lib/engine-strategy-io.js";
 import { readRunnableScripts } from "../lib/script-catalogue-client.js";
 import { listBriefAsks } from "../lib/brief-opt-in-store.js";
+import { listBriefMostUnits } from "../lib/brief-most-units-store.js";
 import { loadPlayCatalogue } from "../lib/plays-store.js";
 import { seededRng, CAMPAIGN_DRAWS } from "../lib/campaign-engine-scripts.js";
 import { campaignPlanTree } from "../lib/campaign-plan-tree.js";
@@ -43,7 +45,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:id/plan-tree", apiKeyAuth, 
       void warmScriptEngines(true).catch((err) => console.error("[features-service] script engines board build failed:", err));
       return void res.status(503).json({ error: "The script Rating is being built (every 15 minutes).", reason: "script_rating_not_built_yet" });
     }
-    const [strategies, briefAsks, runnable, catalogue, declared] = await Promise.all([listEngineStrategies(row.id), listBriefAsks(row.id), readRunnableScripts(), loadPlayCatalogue(), listDeclaredSteps()]);
+    const [strategies, briefAsks, mostUnits, runnable, catalogue, declared] = await Promise.all([listEngineStrategies(row.id), listBriefAsks(row.id), listBriefMostUnits(row.id), readRunnableScripts(), loadPlayCatalogue(), listDeclaredSteps()]);
     const labels = new Map<string, string>([
       ...Object.entries(CHANNEL_STEPS).map(([k, v]) => [k, v.label] as const),
       ...NEW_LEAD_STATE_STEPS.map((s) => [s.key, s.label] as const),
@@ -54,6 +56,7 @@ router.get("/brands/:brandId/sales-funnel-campaigns/:id/plan-tree", apiKeyAuth, 
       target: row.target ?? null,
       stored: strategies,
       briefAsks,
+      mostUnits,
       runnable,
       catalogue,
       fleetRatings: cell.ratings,

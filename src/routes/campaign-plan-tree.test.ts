@@ -52,6 +52,13 @@ vi.mock("../lib/script-catalogue-client.js", async (orig) => ({
 }));
 vi.mock("../lib/plays-store.js", () => ({ loadPlayCatalogue: async () => ({ tactics: new Map(), strategies: new Map(), tacticsByWriter: new Map() }) }));
 vi.mock("../lib/channel-declarations-store.js", () => ({ listDeclaredSteps: async () => [] }));
+// BRIEF-DAILY-CAP-1125: the STORED answers of the most Units the brief allows; the live pass (the only path asking Jev) is spied.
+const capsOf = vi.fn(async (_id: string): Promise<Array<Record<string, unknown>>> => []);
+vi.mock("../lib/brief-most-units-store.js", () => ({ listBriefMostUnits: (id: string) => capsOf(id), readBriefMostUnits: async () => null, writeBriefMostUnits: async () => undefined }));
+const livePass = vi.fn();
+vi.mock("../lib/brief-most-units-io.js", () => ({ mostUnitsOfCampaign: (...a: unknown[]) => livePass(...a), askBriefMostUnits: (...a: unknown[]) => livePass(...a) }));
+const chat = vi.fn();
+vi.stubGlobal("fetch", (...a: unknown[]) => chat(...a));
 
 const { default: treeRoutes } = await import("./campaign-plan-tree.js");
 const { default: carriedRoutes } = await import("./carried-verdicts.js");
@@ -83,6 +90,24 @@ describe("GET /brands/:brandId/sales-funnel-campaigns/:id/plan-tree", () => {
     expect(write).not.toHaveBeenCalled();
     expect(JSON.stringify(res.body)).not.toMatch(/valuePerDollar|creditUsd|valueUsd|score/);
     expect((await request(app).get(url)).body).toEqual(res.body);
+  });
+
+  it("each node serves the most Units the brief allows there, from the STORED answer: never asked on this read (BRIEF-DAILY-CAP-1125)", async () => {
+    stored = built();
+    expect((await request(app).get(url)).body.nodes.map((n: { mostUnits: unknown }) => n.mostUnits)).toEqual([null, null, null]);
+    capsOf.mockResolvedValueOnce([
+      { campaignId: "sfc-1", outcome: "message_sent", units: 25, per: "day" },
+      { campaignId: "sfc-1", outcome: "signup", units: null, per: null },
+    ]);
+    const res = await request(app).get(url);
+    expect(res.body.nodes.map((n: { outcome: string; mostUnits: unknown }) => [n.outcome, n.mostUnits])).toEqual([
+      ["signup", null],
+      ["message_sent", { units: 25, per: "day", days: 1 }],
+      ["message_written", null],
+    ]);
+    expect(capsOf).toHaveBeenCalledWith("sfc-1");
+    expect(livePass).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
   });
 
   it("a campaign stating no Target serves no node, with the reason", async () => {

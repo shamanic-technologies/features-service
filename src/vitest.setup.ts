@@ -361,3 +361,19 @@ vi.mock("./lib/brief-opt-in-store.js", () => ({
   listBriefAsks: vi.fn(async () => []),
   writeBriefAsks: vi.fn(async () => undefined),
 }));
+
+/**
+ * Suite-wide default: the most Units a campaign's brief allows per Engine (lib/brief-most-units-*.ts, BRIEF-DAILY-CAP-1125)
+ * is a Postgres table read in the brief judge's live pass, re-asked of Jev when the brief moved. Here nothing is stored,
+ * a write is a no-op and the live pass asks nothing (no cap): the state before the table existed, so no suite's Jev
+ * fixture has to answer it. `lib/brief-most-units-io.test.ts` runs the real pass.
+ */
+vi.mock("./lib/brief-most-units-store.js", () => ({
+  readBriefMostUnits: vi.fn(async () => null),
+  listBriefMostUnits: vi.fn(async () => []),
+  writeBriefMostUnits: vi.fn(async () => undefined),
+}));
+vi.mock("./lib/brief-most-units-io.js", () => ({
+  askBriefMostUnits: vi.fn(async () => ({ units: null, per: null, probability: 0, confidence: null, model: "suite_default" })),
+  mostUnitsOfCampaign: vi.fn(async () => null),
+}));

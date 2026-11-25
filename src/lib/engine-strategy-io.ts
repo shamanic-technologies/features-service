@@ -19,6 +19,8 @@ import type { Strategy } from "./plays.js";
 import { fetchSalesFunnelCampaigns } from "./sales-funnel-campaigns-client.js";
 import { readRunnableScripts } from "./script-catalogue-client.js";
 import { briefAsksOfCampaign } from "./brief-opt-in-io.js";
+import { mostUnitsOfCampaign } from "./brief-most-units-io.js";
+import type { MostUnits } from "./brief-most-units.js";
 import {
   briefHashOf,
   engineStrategyBearsQuestion,
@@ -132,6 +134,8 @@ export type CampaignEngineStrategy =
       strategy: Strategy | null;
       /** The opt-in script tactics the campaign's BRIEF asks for on this Engine (tactic ids; `lib/brief-opt-in.ts`). */
       briefAsks: string[];
+      /** The most Units the campaign's BRIEF allows on this Engine (`lib/brief-most-units.ts`); null = no cap. */
+      mostUnits: MostUnits | null;
     };
 
 const held = new Map<string, { at: number; value: Promise<CampaignEngineStrategy> }>();
@@ -207,6 +211,9 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     // A failure throws like the strategy judge's. No opt-in tactic on the Engine, or no brief = no call.
     const briefAsks = await briefAsksOfCampaign(campaign, { outcome: engine.outcome, label }, brief, briefHash, catalogue, scriptsNow);
     const asked = new Set(briefAsks);
+    // BRIEF-DAILY-CAP-1125: the most Units the brief allows on this Engine, judged in this same pass (the stored answer,
+    // re-asked of Jev when the brief moved). A failure throws like the strategy judge's. No brief = no call, no cap.
+    const mostUnits = await mostUnitsOfCampaign(campaign, { outcome: engine.outcome, label }, brief, briefHash, scriptsNow);
     // Options are read only when a judged verdict may have gone stale on them (a carried one stands on its brief alone).
     let options: EngineStrategyOption[] | null = null;
     const optionsNow = async () => {
@@ -215,13 +222,13 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     };
     const signature = stored?.source === "judge" && stored.briefHash === briefHash ? optionsSignatureOf(await optionsNow()) : null;
     const need = engineStrategyNeed(stored, briefHash, signature);
-    if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies), briefAsks };
+    if (need === "stored") return { kind: "kept", row: stored!, strategy: strategyOfStored(stored!, catalogue.strategies), briefAsks, mostUnits };
     if (need === "no_condition") {
       // No brief: no strategy, no filter. Every runnable script of the Engine, the Rating picks (NO-BRIEF-UNBLOCK-1111).
       const next = { campaignId: campaign.campaignId, outcome: engine.outcome, orgId: campaign.orgId, strategyId: null, source: "empty_brief" as const, briefHash: null, optionsSignature: null, confidence: null, model: null, carriedFrom: null };
       await writeEngineStrategy(next);
       console.log(`[features-service] campaign ${campaign.campaignId} states no brief: no condition on ${engine.outcome}`);
-      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: null, briefAsks };
+      return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: null, briefAsks, mostUnits };
     }
     const opts = await optionsNow();
     const pick = opts.length <= 1 ? { option: opts[0]!, confidence: 1, model: "single_option" } : await askJev(engineStrategyState(brief!, { outcome: engine.outcome, label }, { scripts, options: opts, c: catalogue, briefAsks: asked }), opts);
@@ -239,7 +246,7 @@ export function engineStrategyOfCampaign(campaign: { campaignId: string; orgId: 
     };
     await writeEngineStrategy(next);
     console.log(`[features-service] brief of campaign ${campaign.campaignId} judged on Engine ${engine.outcome}: ${pick.option.strategyId ?? "no condition"} (${pick.confidence}, was ${stored ? (stored.strategyId ?? "no condition") : "none"})`);
-    return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: strategyOfStored(next, catalogue.strategies), briefAsks };
+    return { kind: "kept", row: { ...next, judgedAt: new Date().toISOString() }, strategy: strategyOfStored(next, catalogue.strategies), briefAsks, mostUnits };
   })();
   held.set(key, { at: Date.now(), value });
   value.catch(() => {

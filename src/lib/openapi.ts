@@ -6375,6 +6375,14 @@ registry.registerPath({
   },
 });
 
+/** BRIEF-DAILY-CAP-1125: the most Units a campaign's brief allows on one Engine; null = the brief states none. */
+const MostUnitsSchema = z
+  .object({
+    units: z.number().int().describe("At most this many Units of the Engine's outcome per period (1 or more)."),
+    per: z.enum(["day", "week", "month"]).describe("The period, as the brief states it."),
+    days: z.number().int().describe("The period's length in days: day 1, week 7, month 30."),
+  })
+  .nullable();
 registry.registerPath({
   method: "get",
   path: "/internal/script-strategy",
@@ -6400,6 +6408,8 @@ registry.registerPath({
             strategyId: z.string().nullable().describe("Null = no strategy: every script kept."),
             strategyName: z.string().nullable(),
             strategySource: z.enum(["campaign_engine_carried", "campaign_engine_judge", "campaign_engine_empty_brief", "stated_by_caller", "no_campaign"]).describe("The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111). With no campaign: `stated_by_caller` (the `strategyId` asked) or `no_campaign` (none asked: no condition, every runnable script kept)."),
+            briefAsksTacticIds: z.array(z.string()).describe("The opt-in script tactics the campaign's brief asks for on this Engine (judged by Jev in the same pass as the strategy, stored); empty with no campaign."),
+            mostUnits: MostUnitsSchema.describe("BRIEF-DAILY-CAP-1125 (framework: « Daily caps in the brief become most Units per day at an Engine »). The most Units of this Engine's outcome the campaign's brief allows per `per` (`days` days), judged by Jev from the brief in the same pass as the strategy and stored with the brief (re-asked when it moves). Null = the brief states no such limit on THIS Engine (a limit counting another Engine's outcome is that Engine's), the campaign states no brief, or there is no campaign: no cap, never a default. The runner enforces it (this read holds nothing): once the campaign made `units` Units of the outcome within the period, it holds the Engine until the period turns."),
             scriptTacticIds: z.array(z.string()).describe("The script tactics the strategy names (requires + excludes); empty = it narrows no script."),
             keptDynasties: z.array(z.string()).describe("The script dynasties (`dynasty` of workflow-service's catalogue) a run may pick among."),
             scripts: z.array(
@@ -6634,6 +6644,7 @@ const PlanTreeNodeSchema = z.object({
   neededByScript: z.string().nullable().describe("`<outcome>/<dynasty>` of the parent's picked script; null on the Target."),
   strategyState: z.enum(["kept", "no_condition", "not_judged_yet"]).describe("`kept` = the campaign's brief keeps a strategy on this Engine; `no_condition` = judged, no condition; `not_judged_yet` = the campaign holds no stored verdict on this Engine (this read never asks the judge: the Engine runner judges the brief on its first run here; until then every runnable script competes, opt-in scripts left out)."),
   strategy: z.object({ id: z.string(), name: z.string(), description: z.string() }).nullable(),
+  mostUnits: MostUnitsSchema.describe("The most Units of this Engine's outcome the campaign's brief allows per day, week or month (« at most one post a day »), as judged from the brief and STORED (this read never asks the judge). Null = the brief states none on this Engine, or it is not judged yet: no cap."),
   rules: z.array(z.object({ kind: z.enum(["requires", "excludes"]), tacticId: z.string(), name: z.string(), clientLine: z.string().nullable() })).describe("What the strategy requires and excludes of a script on this Engine, in words."),
   drawRule: z.enum(["what_runs_led_to_per_cost", "what_runs_led_to", "cheapest_per_run", "no_script"]).describe("How today's draws choose among the kept scripts."),
   picked: z.string().nullable().describe("The script the Plan goes through on this Engine: the one today's draws pick most among the kept. Null = none (see `endReason`)."),

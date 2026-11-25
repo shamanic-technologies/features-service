@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { BRIEF_JUDGMENT_SUPPORT, BRIEF_OPT_IN_SUPPORT, CARRIED_DRY_JUDGE_SUPPORT, ENGINE_STRATEGY_SUPPORT, HUMAN_BRIEF_SUPPORT, NICHE_GRADE_SUPPORT, ONE_LEG_JUDGMENT_SUPPORT, SUPPORT_FUNCTIONS, TACTIC_JUDGMENT_SUPPORT, type PlatformSupport } from "./platform-caller.js";
+import { BRIEF_JUDGMENT_SUPPORT, BRIEF_MOST_UNITS_SUPPORT, BRIEF_OPT_IN_SUPPORT, CARRIED_DRY_JUDGE_SUPPORT, ENGINE_STRATEGY_SUPPORT, HUMAN_BRIEF_SUPPORT, NICHE_GRADE_SUPPORT, ONE_LEG_JUDGMENT_SUPPORT, SUPPORT_FUNCTIONS, TACTIC_JUDGMENT_SUPPORT, type PlatformSupport } from "./platform-caller.js";
 
 // PLATFORM-CALLER-RUN-1024: every call to a chat-service platform route states ONE of its own run (x-run-id) or a
 // support function. Each known call site is pinned to its decided choice; a new call site fails until decided here.
@@ -16,6 +16,7 @@ const DECIDED: Record<string, { constant: string; support: PlatformSupport }> = 
   "src/lib/engine-strategy-io.ts": { constant: "ENGINE_STRATEGY_SUPPORT", support: ENGINE_STRATEGY_SUPPORT },
   "src/lib/human-brief-io.ts": { constant: "HUMAN_BRIEF_SUPPORT", support: HUMAN_BRIEF_SUPPORT },
   "src/lib/brief-opt-in-io.ts": { constant: "BRIEF_OPT_IN_SUPPORT", support: BRIEF_OPT_IN_SUPPORT },
+  "src/lib/brief-most-units-io.ts": { constant: "BRIEF_MOST_UNITS_SUPPORT", support: BRIEF_MOST_UNITS_SUPPORT },
 };
 
 /**
