@@ -38,13 +38,6 @@ export interface StoredBriefAsk {
 export const BRIEF_ASKS_FROM = 0.5;
 
 /**
- * MEASURE FIRST: until `BRIEF_OPT_IN_ENFORCE=true`, the answers are judged and STORED but let no script in: every reader
- * sees no ask, as before this file existed. Staff read the stored answers of every running campaign (a wrong yes would
- * run a script for people the client never asked to reach), then the switch goes on and this gate is deleted.
- */
-export const briefAsksEnforced = (): boolean => process.env.BRIEF_OPT_IN_ENFORCE === "true";
-
-/**
  * PURE: the opt-in tactics of one Engine whose stored answer no longer stands for this brief: never judged, judged on
  * another brief, or on another description of the tactic. No brief (`briefHash` null) = none: nothing is asked.
  */
@@ -59,7 +52,6 @@ export function briefAsksToJudge(optIns: readonly Tactic[], stored: readonly Pic
 
 /** PURE: the tactic ids the brief asks for on one Engine, among the opt-in tactics applying there, in id order. */
 export function askedByBrief(stored: readonly Pick<StoredBriefAsk, "outcome" | "tacticId" | "asks">[], outcome: string, optIns: readonly Pick<Tactic, "id">[]): string[] {
-  if (!briefAsksEnforced()) return [];
   const yes = new Set(stored.filter((r) => r.outcome === outcome && r.asks).map((r) => r.tacticId));
   return optIns.map((t) => t.id).filter((id) => yes.has(id));
 }
@@ -70,7 +62,6 @@ export function askedByBrief(stored: readonly Pick<StoredBriefAsk, "outcome" | "
  */
 export function briefAsksByEngine(stored: readonly Pick<StoredBriefAsk, "outcome" | "tacticId" | "asks">[]): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
-  if (!briefAsksEnforced()) return out;
   for (const r of stored) {
     if (!r.asks) continue;
     out.set(r.outcome, (out.get(r.outcome) ?? new Set<string>()).add(r.tacticId));
@@ -81,7 +72,7 @@ export function briefAsksByEngine(stored: readonly Pick<StoredBriefAsk, "outcome
 /** PURE: the same, per campaign (fleet reads): `<campaign>|<Engine>` -> tactic ids. */
 export function briefAsksByCampaignEngine(stored: readonly Pick<StoredBriefAsk, "campaignId" | "outcome" | "tacticId" | "asks">[]): (campaignId: string, outcome: string) => ReadonlySet<string> {
   const out = new Map<string, Set<string>>();
-  for (const r of briefAsksEnforced() ? stored : []) {
+  for (const r of stored) {
     if (!r.asks) continue;
     const k = `${r.campaignId}|${r.outcome}`;
     out.set(k, (out.get(k) ?? new Set<string>()).add(r.tacticId));
