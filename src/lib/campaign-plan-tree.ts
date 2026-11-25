@@ -22,6 +22,7 @@ import { strategyOnEngine } from "./plays.js";
 import { scriptDynastyKey, type RunnableScript } from "./script-catalogue-client.js";
 import { scriptsKeptByStrategy } from "./script-strategy.js";
 import { briefAsksByEngine, type StoredBriefAsk } from "./brief-opt-in.js";
+import { mostUnitsByEngine, type MostUnits, type StoredBriefMostUnits } from "./brief-most-units.js";
 import type { StoredEngineStrategy } from "./engine-strategy.js";
 import { CAMPAIGN_DRAWS, type DrawRule, type StrategyState } from "./campaign-engine-scripts.js";
 import { pickScript, type OutcomeValue, type ScriptPick, type ScriptRating } from "./script-value-rating.js";
@@ -74,6 +75,8 @@ export interface PlanTreeNode {
   neededByScript: string | null;
   strategyState: StrategyState;
   strategy: { id: string; name: string; description: string } | null;
+  /** The most Units the campaign's brief allows on this Engine (STORED answer, `lib/brief-most-units.ts`); null = no cap. */
+  mostUnits: MostUnits | null;
   rules: Array<{ kind: "requires" | "excludes"; tacticId: string; name: string; clientLine: string | null }>;
   drawRule: DrawRule;
   /** The script the Plan goes through on this Engine; null = none (see `endReason`). */
@@ -107,6 +110,8 @@ export function campaignPlanTree(input: {
   stored: readonly Pick<StoredEngineStrategy, "outcome" | "strategyId" | "campaignId">[];
   /** STORED answers of what the campaign's brief asks for (opt-in tactics per Engine, `lib/brief-opt-in.ts`); never asked here. */
   briefAsks?: readonly Pick<StoredBriefAsk, "outcome" | "tacticId" | "asks">[];
+  /** STORED answers of the most Units the brief allows per Engine (`lib/brief-most-units.ts`); never asked here. */
+  mostUnits?: readonly Pick<StoredBriefMostUnits, "outcome" | "units" | "per">[];
   runnable: readonly RunnableScript[];
   catalogue: Pick<PlayCatalogue, "tactics" | "strategies" | "tacticsByWriter">;
   /** The fleet Rating (every script's runs and reach): what the runner draws on. Never served. */
@@ -120,6 +125,7 @@ export function campaignPlanTree(input: {
   const draws = input.draws ?? CAMPAIGN_DRAWS;
   const storedByOutcome = new Map(input.stored.map((s) => [s.outcome, s]));
   const briefAsks = briefAsksByEngine(input.briefAsks ?? []);
+  const mostUnits = mostUnitsByEngine(input.mostUnits ?? []);
   const nodes: PlanTreeNode[] = [];
 
   const walk = (outcome: string, path: readonly string[], neededByScript: string | null): string => {
@@ -132,6 +138,7 @@ export function campaignPlanTree(input: {
       label: input.labelOf(outcome),
       isTarget: path.length === 0,
       neededByScript,
+      mostUnits: mostUnits.get(outcome) ?? null,
     };
     const row = storedByOutcome.get(outcome);
     let strategy: Strategy | null = null;

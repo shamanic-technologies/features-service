@@ -74,6 +74,20 @@ describe("scriptNeedsOf", () => {
 });
 
 describe("campaignPlanTree", () => {
+  it("a node carries the most Units the brief allows on its Engine (stored answer), null where none is stated (BRIEF-DAILY-CAP-1125)", () => {
+    const input = { target: "signup", stored: [{ outcome: "signup", strategyId: "through-threads-posts", campaignId: "c1" }], runnable, catalogue, fleetRatings, values, labelOf, rngOf: (key: string) => seededRng(`c1|build|${key}`) };
+    const capped = campaignPlanTree({ ...input, mostUnits: [{ outcome: "threads_post_published", units: 1, per: "day" }, { outcome: "llm_completion", units: null, per: null }] });
+    expect(capped.nodes.map((n) => [n.outcome, n.mostUnits])).toEqual([
+      ["signup", null],
+      ["threads_post_published", { units: 1, per: "day", days: 1 }],
+      ["llm_completion", null],
+    ]);
+    // No stored answer: every node null, the tree otherwise the same.
+    const plain = campaignPlanTree(input);
+    expect(plain.nodes.map((n) => n.mostUnits)).toEqual([null, null, null]);
+    expect(capped.nodes.map(({ mostUnits: _m, ...n }) => n)).toEqual(plain.nodes.map(({ mostUnits: _m, ...n }) => n));
+  });
+
   it("worked example: a strategy asking for Threads posts walks signup -> threads post -> llm completion, and nothing else", () => {
     const { nodes, unavailableReason } = tree([{ outcome: "signup", strategyId: "through-threads-posts" }]);
     expect(unavailableReason).toBeNull();
