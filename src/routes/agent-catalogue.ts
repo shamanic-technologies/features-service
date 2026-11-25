@@ -123,7 +123,7 @@ import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
 import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription, updateTacticGate } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
-import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
+import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, scriptsUnjudgedOnTactic, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
 import { readRunnableScriptsForCatalogue, scriptWorksPipe, type RunnableScript } from "../lib/script-catalogue-client.js";
 import { excludedPipeCandidates, scriptsKeptByStrategy } from "../lib/script-strategy.js";
@@ -2203,6 +2203,9 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
     }
     const optIn = optInOf(body);
     if (optIn && appliesTo !== "script") throw new DeclarationError(400, "opt_in_script_only", "only a script tactic can be opt-in (appliesTo: script)");
+    // OPT-IN-UNJUDGED-1125: a script with no verdict on an opt-in tactic is kept out, so a tactic born opt-in would stop
+    // every script of the Engines it gates until the sweep reaches them. Born plain, judged, then made opt-in.
+    if (optIn) throw new DeclarationError(409, "opt_in_after_judged", "create the tactic without optIn, wait until every script is judged on it (GET /internal/catalogue/tactics/:id judging.status complete), then PATCH {optIn: true}");
     const t = await insertTactic({ name: text(body, "name", 60), description: text(body, "description", 500), createdBy: actorOf(body), clientLine: body.clientLine === undefined ? null : text(body, "clientLine", 80), appliesTo: appliesTo as TacticSubject, optIn: optIn ?? false, decidedByFields: decidedByFieldsOf(body) ?? null });
     console.log(`[features-service] agent catalogue: ${t.appliesTo} tactic ${t.id} declared by ${t.createdBy}; Jev judges every ${t.appliesTo} on it`);
     void kickTacticJudgments();
@@ -2211,6 +2214,24 @@ router.post("/internal/catalogue/tactics", apiKeyOnly, async (req, res) => {
     fail(res, err, "create tactic");
   }
 });
+
+/**
+ * OPT-IN-UNJUDGED-1125: a tactic is (or stays) opt-in over a set of Engines only once every runnable script there holds a
+ * verdict on it: an unjudged script is kept out (`optInRefusal`), so gating scripts the sweep has not reached would
+ * stop them all. Refused 409 with the scripts still waiting. A tactic that is not, and is not becoming, opt-in passes.
+ */
+async function assertOptInGateJudged(id: string, optIn: boolean | undefined, decidedByFields: string[] | null | undefined): Promise<void> {
+  const [catalogue, scripts] = await Promise.all([loadPlayCatalogue(), readRunnableScriptsForCatalogue()]);
+  const current = catalogue.tactics.get(id);
+  if (!current) return;
+  const willBeOptIn = optIn ?? current.optIn ?? false;
+  const widens = optIn === true && current.optIn !== true ? true : decidedByFields !== undefined;
+  if (!willBeOptIn || !widens) return;
+  const waiting = scriptsUnjudgedOnTactic({ id, decidedByFields: decidedByFields === undefined ? (current.decidedByFields ?? null) : decidedByFields }, scripts, catalogue.tacticsByWriter);
+  if (waiting.length > 0) {
+    throw new DeclarationError(409, "tactic_not_judged_on_every_script", `${waiting.length} runnable script(s) of the Engines this tactic would gate are not judged on it yet (${waiting.slice(0, 5).join(", ")}${waiting.length > 5 ? ", …" : ""}): they would stop running until judged. Retry once GET /internal/catalogue/tactics/${id} reads judging.status complete.`);
+  }
+}
 
 /**
  * Edit a tactic's description (owner 2026-10-14). Unique like a new one (409 `tactic_description_taken`); the name and
@@ -2224,6 +2245,7 @@ router.patch("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => 
     const optIn = optInOf(body);
     const decidedByFields = decidedByFieldsOf(body);
     if (optIn !== undefined || decidedByFields !== undefined) {
+      await assertOptInGateJudged(req.params.id, optIn, decidedByFields);
       const gate = await updateTacticGate({ id: req.params.id, optIn, decidedByFields, updatedBy: actorOf(body, "updatedBy") });
       if (gate.changed) {
         console.log(`[features-service] agent catalogue: tactic ${gate.tactic.id} opt-in=${gate.tactic.optIn} decidedByFields=${JSON.stringify(gate.tactic.decidedByFields)} set by ${gate.tactic.updatedBy}`);
