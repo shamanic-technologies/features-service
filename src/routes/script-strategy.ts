@@ -9,6 +9,8 @@
  * condition (`strategyId: null`, every runnable script; NO-BRIEF-UNBLOCK-1111, was 503 `campaign_states_no_brief`).
  * An OPT-IN script tactic lets a script in where the strategy requires it OR the campaign's brief asks for it
  * (`briefAsksTacticIds`, judged by Jev in the same pass as the strategy, stored; a Jev failure = 502 like the strategy's).
+ * `mostUnits` (BRIEF-DAILY-CAP-1125) = the most Units of this Engine's outcome the campaign's brief allows per day, week or
+ * month, judged in that same pass and stored; null = the brief states none (no cap). The runner enforces it, not this read.
  *
  *   GET /internal/script-strategy?outcome=[&strategyId=]   (api key; no campaign yet, PREVIEW-EMAIL-503-1111)
  *
@@ -58,6 +60,7 @@ router.get("/internal/script-strategy", apiKeyOnly, async (req: Request, res: Re
       strategyName: stored.strategy?.name ?? null,
       strategySource: `campaign_engine_${stored.row.source}`,
       briefAsksTacticIds: briefAsks,
+      mostUnits: stored.mostUnits ?? null,
       ...kept,
     });
   } catch (error) {
@@ -82,6 +85,7 @@ async function scriptsWithoutCampaign(req: Request, res: Response, outcome: stri
       strategyName: strategy?.name ?? null,
       strategySource: strategy ? "stated_by_caller" : "no_campaign",
       briefAsksTacticIds: [],
+      mostUnits: null,
       ...kept,
     });
   } catch (error) {

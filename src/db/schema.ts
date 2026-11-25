@@ -1127,6 +1127,25 @@ export const campaignBriefOptInAsks = pgTable(
   (table) => [primaryKey({ name: "campaign_brief_opt_in_asks_pk", columns: [table.campaignId, table.outcome, table.tacticId] })],
 );
 
+/** BRIEF-DAILY-CAP-1125: the most Units a campaign's brief allows per Engine (`lib/brief-most-units.ts`); `units` null = no cap. */
+export const campaignBriefMostUnits = pgTable(
+  "campaign_brief_most_units",
+  {
+    campaignId: text("campaign_id").notNull(),
+    outcome: text("outcome").notNull(),
+    orgId: text("org_id").notNull(),
+    units: integer("units"),
+    per: text("per"),
+    probability: doublePrecision("probability").notNull(),
+    confidence: doublePrecision("confidence"),
+    model: text("model").notNull(),
+    briefHash: text("brief_hash").notNull(),
+    rule: text("rule").notNull(),
+    judgedAt: timestamp("judged_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "campaign_brief_most_units_pk", columns: [table.campaignId, table.outcome] })],
+);
+
 /**
  * CAMPAIGN-CHANGE-LOG-1119 (migration 0080): every change of the strategy kept per (unit campaign, Engine), appended by
  * `writeEngineStrategy` when the kept strategy moves (a re-judgement keeping the same one is no row). Append-only;

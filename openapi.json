@@ -54398,6 +54398,42 @@
                       ],
                       "description": "The strategy the campaign keeps on this Engine (MIGRATE-1105 S6): carried by the S6 migration, judged from its brief, or `empty_brief` = the campaign states no brief: no condition, every runnable script kept (NO-BRIEF-UNBLOCK-1111). With no campaign: `stated_by_caller` (the `strategyId` asked) or `no_campaign` (none asked: no condition, every runnable script kept)."
                     },
+                    "briefAsksTacticIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The opt-in script tactics the campaign's brief asks for on this Engine (judged by Jev in the same pass as the strategy, stored); empty with no campaign."
+                    },
+                    "mostUnits": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "units": {
+                          "type": "integer",
+                          "description": "At most this many Units of the Engine's outcome per period (1 or more)."
+                        },
+                        "per": {
+                          "type": "string",
+                          "enum": [
+                            "day",
+                            "week",
+                            "month"
+                          ],
+                          "description": "The period, as the brief states it."
+                        },
+                        "days": {
+                          "type": "integer",
+                          "description": "The period's length in days: day 1, week 7, month 30."
+                        }
+                      },
+                      "required": [
+                        "units",
+                        "per",
+                        "days"
+                      ],
+                      "description": "BRIEF-DAILY-CAP-1125 (framework: « Daily caps in the brief become most Units per day at an Engine »). The most Units of this Engine's outcome the campaign's brief allows per `per` (`days` days), judged by Jev from the brief in the same pass as the strategy and stored with the brief (re-asked when it moves). Null = the brief states no such limit on THIS Engine (a limit counting another Engine's outcome is that Engine's), the campaign states no brief, or there is no campaign: no cap, never a default. The runner enforces it (this read holds nothing): once the campaign made `units` Units of the outcome within the period, it holds the Engine until the period turns."
+                    },
                     "scriptTacticIds": {
                       "type": "array",
                       "items": {
@@ -54452,6 +54488,8 @@
                     "strategyId",
                     "strategyName",
                     "strategySource",
+                    "briefAsksTacticIds",
+                    "mostUnits",
                     "scriptTacticIds",
                     "keptDynasties",
                     "scripts"
@@ -56599,6 +56637,35 @@
                               "description"
                             ]
                           },
+                          "mostUnits": {
+                            "type": "object",
+                            "nullable": true,
+                            "properties": {
+                              "units": {
+                                "type": "integer",
+                                "description": "At most this many Units of the Engine's outcome per period (1 or more)."
+                              },
+                              "per": {
+                                "type": "string",
+                                "enum": [
+                                  "day",
+                                  "week",
+                                  "month"
+                                ],
+                                "description": "The period, as the brief states it."
+                              },
+                              "days": {
+                                "type": "integer",
+                                "description": "The period's length in days: day 1, week 7, month 30."
+                              }
+                            },
+                            "required": [
+                              "units",
+                              "per",
+                              "days"
+                            ],
+                            "description": "The most Units of this Engine's outcome the campaign's brief allows per day, week or month (« at most one post a day »), as judged from the brief and STORED (this read never asks the judge). Null = the brief states none on this Engine, or it is not judged yet: no cap."
+                          },
                           "rules": {
                             "type": "array",
                             "items": {
@@ -56778,6 +56845,7 @@
                           "neededByScript",
                           "strategyState",
                           "strategy",
+                          "mostUnits",
                           "rules",
                           "drawRule",
                           "picked",
