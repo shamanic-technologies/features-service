@@ -6828,6 +6828,24 @@ const fleetIndexRangeReasonSchema = z
   .describe(
     "Why `valueRange` is null (null when it is served): `no_value` (value is null), `expected_value` (a quoted price, not a measurement), `no_outcome` (no outcome behind a cost), `people_emailed_not_counted`, `inputs_not_recorded` (a chained index day missing its counts), `range_not_recorded_that_day` (client-median index, a day recorded before the range was recorded beside it).",
   );
+const fleetIndexDerivedRangeSchema = registry.register(
+  "FleetIndexDerivedValueRange",
+  z
+    .object({
+      low: z.number().describe("20th percentile of the derived estimate's uncertainty, same unit and cost basis as `value`; low <= value."),
+      high: z.number().describe("80th percentile of the derived estimate's uncertainty, same unit and cost basis as `value`; value <= high."),
+    })
+    .nullable()
+    .describe(
+      "The likely range of an EXPECTED `value` (OUTCOME-RANGES-1125): DERIVED, not measured. The 20th to 80th percentile of the uncertainty of the counts the estimate is derived from, propagated through its own formula (same Jeffreys posteriors as `valueRange`: 4,000 seeded draws through a chain such as interest cost ÷ booking rate + cost per meeting, or click cost ÷ visit -> signup share; Gamma(k + 1/2) on the leg's outcomes for an expected leg cost, the Jeffreys interval for an expected rate). Served only when `valueKind` is `expected`; a measured value's range is `valueRange`. Null + `derivedValueRangeUnavailableReason` otherwise.",
+    ),
+);
+const fleetIndexDerivedRangeReasonSchema = z
+  .string()
+  .nullable()
+  .describe(
+    "Why `derivedValueRange` is null (null when it is served): `measured_value` (the value is measured: read `valueRange`), `no_value` (value is null), `no_outcome` (no outcome behind the derived estimate), `inputs_not_recorded` (the counts it was derived from are not on the point, e.g. the outcome prices' quoted meeting price).",
+  );
 const fleetIndexRangeRuleSchema = z
   .object({ lowPercentile: z.literal(20), highPercentile: z.literal(80), text: z.string().describe("The range rule in one plain sentence, for the fine print.") })
   .describe("How every `valueRange` is read.");
@@ -6839,7 +6857,7 @@ const fleetIndexSummarySchema = registry.register(
     name: z.string().describe("Display name, e.g. `Cold Email Cost Per Click Index`."),
     channelSlug: z.string(),
     channelName: z.string(),
-    outcome: z.enum(["website_visit", "positive_reply", "meeting_booked", "engaged_lead"]).describe("`engaged_lead`: a positive reply or a website visit."),
+    outcome: z.enum(["website_visit", "positive_reply", "meeting_booked", "signup", "engaged_lead"]).describe("`engaged_lead`: a positive reply or a website visit. `signup`: a person signed up on the client's site (`cold-email-cost-per-signup`, OUTCOME-RANGES-1125)."),
     metric: z.enum(["cost_per_outcome", "conversion_rate"]),
     unit: z.enum(["usd", "percent"]).describe("`usd`: dollars per outcome. `percent`: 0..100, share of people emailed."),
     valuePer: z.string().describe("What one unit of the value is, in words (`per website visit`, `of people emailed`)."),
@@ -6851,11 +6869,13 @@ const fleetIndexSummarySchema = registry.register(
     contacted: z.number().int().nullable().describe("People emailed behind the value; null on a chained index."),
     workflowDynastySlug: z.string().nullable().describe("The workflow the value is read on: the best MATURE workflow of the pipe that can still run (a chained index: the reply index's)."),
     workflowDynastyName: z.string().nullable(),
-    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow` (days recorded before 2026-11-09 only), `no_script_ran_yet` / `nothing_runnable_on_pipe` (cold email indexes since PUBLIC-INDEXES-NULL-1117: read on the `email_sent` Engine's scripts, the best mature runnable one, else the best available one once its outcomes reach the noise bar of 10, status noise), `no_meeting_measured`, `not_measured` (a cold email index: no runnable script has reached 10 outcomes yet; `outcomes` / `contacted` say what it rests on so far, INDEX-VISITS-1117), `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."),
-    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". An expected value is at real vendor cost too. The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
+    unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow` (days recorded before 2026-11-09 only), `no_script_ran_yet` / `nothing_runnable_on_pipe` (cold email indexes since PUBLIC-INDEXES-NULL-1117: read on the `email_sent` Engine's scripts, the best mature runnable one, else the best available one once its outcomes reach the noise bar of 10, status noise), `no_meeting_measured`, `not_measured` (a cold email index: no runnable script has reached 10 outcomes yet; `outcomes` / `contacted` say what it rests on so far, INDEX-VISITS-1117), `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low), `visit_to_signup_not_measured` (Cost Per Signup Index: the cost ledger has not chained 10 website visits to a signup yet, `inputs.visitsConsumed` / `inputs.visitsLedToSignup`)."),
+    valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". An expected value is at real vendor cost too; its likely range is `derivedValueRange`. The Cost Per Signup Index is always expected (the click index ÷ the ledger's visit -> signup share). The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
     recordedAt: z.string().nullable(),
     valueRange: fleetIndexValueRangeSchema,
     valueRangeUnavailableReason: fleetIndexRangeReasonSchema,
+    derivedValueRange: fleetIndexDerivedRangeSchema,
+    derivedValueRangeUnavailableReason: fleetIndexDerivedRangeReasonSchema,
   }),
 );
 
@@ -6912,6 +6932,8 @@ registry.registerPath({
                 inputs: z.record(z.string(), z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
                 valueRange: fleetIndexValueRangeSchema,
                 valueRangeUnavailableReason: fleetIndexRangeReasonSchema,
+                derivedValueRange: fleetIndexDerivedRangeSchema,
+                derivedValueRangeUnavailableReason: fleetIndexDerivedRangeReasonSchema,
               }),
             ),
           }),
