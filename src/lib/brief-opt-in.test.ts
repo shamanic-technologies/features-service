@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../db/index.js", () => ({ db: {}, sql: {} }));
 
@@ -34,10 +34,7 @@ const catalogue = buildPlayCatalogue({
 const optIn = catalogue.tactics.get(OTHER_SOURCE)!;
 const row = (asks: boolean, extra: Record<string, unknown> = {}) => ({ campaignId: "c1", outcome: "lead_found", tacticId: OTHER_SOURCE, asks, briefHash: "h1", judgedDescription: optIn.description, ...extra });
 
-describe("a brief asks for an opt-in script tactic, enforced", () => {
-  beforeEach(() => vi.stubEnv("BRIEF_OPT_IN_ENFORCE", "true"));
-  afterEach(() => vi.unstubAllEnvs());
-
+describe("a brief asks for an opt-in script tactic", () => {
   it("lets the script in beside a strategy about another matter, and only then", () => {
     const silent = scriptsKeptByStrategy(scripts, freshOnly, catalogue);
     expect(silent.keptDynasties).toEqual(["dy_own_base"]);
@@ -57,14 +54,6 @@ describe("a brief asks for an opt-in script tactic, enforced", () => {
     expect([...of("c1", "lead_found")]).toEqual([OTHER_SOURCE]);
     expect([...of("c2", "lead_found")]).toEqual([]);
     expect([...of("c1", "email_sent")]).toEqual([]);
-  });
-});
-
-describe("a brief's answers, measured before they are enforced", () => {
-  it("lets no script in while BRIEF_OPT_IN_ENFORCE is not on: every reader sees no ask", () => {
-    expect(askedByBrief([row(true)], "lead_found", [optIn])).toEqual([]);
-    expect(briefAsksByEngine([row(true)]).size).toBe(0);
-    expect([...briefAsksByCampaignEngine([row(true)])("c1", "lead_found")]).toEqual([]);
   });
 });
 
