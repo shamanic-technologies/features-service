@@ -100,6 +100,19 @@ describe("an opt-in script tactic (OUTREACH-3WAYS-1121)", () => {
     expect(scriptsKeptByStrategy([...finders, partial], null, judged).keptDynasties).toContain("dy_find_partial");
   });
 
+  it("a verdict judged on another wording of an opt-in tactic is no verdict: the script is kept out (OPT-IN-CURRENT-VERDICT-1125)", () => {
+    // Back in the catalogue with only a « no » judged on the tactic's OLD words (prod 2026-11-25: kept by every campaign).
+    const back = script("lead_found", "dy_find_back", { serve: {} });
+    const stale = { ...verdict(back, INVESTORS, false), judgedDescription: "older words" };
+    const c = catalogueOf(true, [stale, verdict(back, PEERS, false), verdict(back, FRESH, false)]);
+    const kept = scriptsKeptByStrategy([...finders, back], null, c);
+    expect(kept.keptDynasties).not.toContain("dy_find_back");
+    expect(kept.scripts.find((s) => s.dynasty === "dy_find_back")!.reason).toContain("not judged yet");
+    // The same stale verdict on a tactic that is NOT opt-in still serves until re-judged.
+    const plain = catalogueOf(false, [stale, verdict(back, PEERS, false), verdict(back, FRESH, false)]);
+    expect(plain.tacticsByWriter.get("script|lead_found/dy_find_back")?.get(INVESTORS)).toBe(false);
+  });
+
   it("names the scripts a tactic would gate that are not judged on it yet, only on the Engines deciding its matter", () => {
     const partial = script("lead_found", "dy_find_partial", { serve: {} });
     const c = catalogueOf(true, [verdict(partial, FRESH, false)]);

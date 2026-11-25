@@ -123,7 +123,7 @@ import type { LegAssignmentRow } from "../lib/workflow-leg-assignments.js";
 import { updateTacticSubject } from "../lib/plays-store.js";
 import { insertPlay, retirePlay, insertStrategy, insertTactic, invalidatePlayCatalogue, listVerdicts, listWriterVerdicts, loadPlayCatalogue, proposeStrategyEdit, storeStrategyEdit, updateTacticClientLine, updateTacticDescription, updateTacticGate } from "../lib/plays-store.js";
 import { kickTacticJudgments, SWEEP_EVERY_MS } from "../lib/tactic-judgments.js";
-import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, scriptsUnjudgedOnTactic, subjectOfTactic, tacticJudgingOf, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
+import { defaultStrategyOf, excludedDynasties, playBlockOf, playIdOf, splitPlayId, scriptsUnjudgedOnTactic, subjectOfTactic, tacticJudgingOf, writerTacticsBySubject, tacticNameOf, TACTIC_SUBJECTS, workflowStrategyOf, type TacticSubject, type PlayCatalogue, type Strategy, type Tactic } from "../lib/plays.js";
 import { pgErrorOf } from "../lib/pg-error.js";
 import { readRunnableScriptsForCatalogue, scriptWorksPipe, type RunnableScript } from "../lib/script-catalogue-client.js";
 import { excludedPipeCandidates, scriptsKeptByStrategy } from "../lib/script-strategy.js";
@@ -2227,7 +2227,9 @@ async function assertOptInGateJudged(id: string, optIn: boolean | undefined, dec
   const willBeOptIn = optIn ?? current.optIn ?? false;
   const widens = optIn === true && current.optIn !== true ? true : decidedByFields !== undefined;
   if (!willBeOptIn || !widens) return;
-  const waiting = scriptsUnjudgedOnTactic({ id, decidedByFields: decidedByFields === undefined ? (current.decidedByFields ?? null) : decidedByFields }, scripts, catalogue.tacticsByWriter);
+  // Judged on TODAY's words only (OPT-IN-CURRENT-VERDICT-1125): a verdict on an older wording is no verdict once opt-in.
+  const judgedNow = writerTacticsBySubject((await listWriterVerdicts(id)).filter((r) => r.judgedDescription === current.description));
+  const waiting = scriptsUnjudgedOnTactic({ id, decidedByFields: decidedByFields === undefined ? (current.decidedByFields ?? null) : decidedByFields }, scripts, judgedNow);
   if (waiting.length > 0) {
     throw new DeclarationError(409, "tactic_not_judged_on_every_script", `${waiting.length} runnable script(s) of the Engines this tactic would gate are not judged on it yet (${waiting.slice(0, 5).join(", ")}${waiting.length > 5 ? ", …" : ""}): they would stop running until judged. Retry once GET /internal/catalogue/tactics/${id} reads judging.status complete.`);
   }
@@ -2276,6 +2278,12 @@ router.patch("/internal/catalogue/tactics/:id", apiKeyOnly, async (req, res) => 
       if (body.description === undefined) {
         return void res.json({ ...tacticRowOf(await loadPlayCatalogue(), line.tactic), changed: line.changed, previousDescription: line.tactic.description, updatedBy: line.tactic.updatedBy ?? null, updatedAt: line.tactic.updatedAt ?? null });
       }
+    }
+    // OPT-IN-CURRENT-VERDICT-1125: rewording an opt-in tactic would void every verdict on it at once and keep every
+    // script it gates out until re-judged. Made plain first, reworded, judged, then opt-in again.
+    const before = (await loadPlayCatalogue()).tactics.get(req.params.id);
+    if (before?.optIn === true && typeof body.description === "string" && body.description.trim() !== before.description) {
+      throw new DeclarationError(409, "opt_in_tactic_words_frozen", "an opt-in tactic is reworded while plain: PATCH {optIn: false}, edit the description, wait until every script is judged on it, then PATCH {optIn: true}");
     }
     const { tactic, changed, previousDescription } = await updateTacticDescription({ id: req.params.id, description: text(body, "description", 500), updatedBy: actorOf(body, "updatedBy") });
     if (changed) {
