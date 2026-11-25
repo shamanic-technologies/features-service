@@ -274,12 +274,67 @@ export function clientMedianRange(value: number, clients: ReadonlyArray<{ engage
   return fromDraws(value, draws);
 }
 
+/** Beta(a, b) draw from two Gamma draws. */
+function betaDraw(a: number, b: number, u: () => number): number {
+  const x = gammaDraw(a, u);
+  const y = gammaDraw(b, u);
+  return x / (x + y);
+}
+
+/**
+ * A signup cost chained on the ledger (OUTCOME-RANGES-1125): the click cost (kc visits) ÷ the share of consumed website
+ * visits whose consuming run produced a signup (led of consumed). Draws the click count's Jeffreys Gamma and the share's
+ * Jeffreys Beta(led + 1/2, consumed - led + 1/2), each through the formula.
+ */
+export function signupChainRange(value: number, inputs: Record<string, unknown>, seed: string): ValueRange | null {
+  const click = num(inputs, "clickIndexValue");
+  const kc = num(inputs, "clickOutcomes");
+  const consumed = num(inputs, "visitsConsumed");
+  const led = num(inputs, "visitsLedToSignup");
+  if (click === null || kc === null || consumed === null || led === null || !(kc > 0) || !(led > 0) || !(consumed >= led)) return null;
+  const u = rng(seed);
+  const draws: number[] = [];
+  for (let i = 0; i < DRAWS; i++) {
+    const clickCost = (click * kc) / gammaDraw(kc + 0.5, u);
+    draws.push(clickCost / betaDraw(led + 0.5, consumed - led + 0.5, u));
+  }
+  return fromDraws(value, draws);
+}
+
 /** The inputs keys the recorder writes the client median's range under. */
 export const CLIENT_RANGE_LOW_KEY = "valueRangeLowUsd";
 export const CLIENT_RANGE_HIGH_KEY = "valueRangeHighUsd";
 
 const none = (reason: string): RangeVerdict => ({ valueRange: null, valueRangeUnavailableReason: reason });
 const some = (r: ValueRange | null, reason: string): RangeVerdict => (r ? { valueRange: r, valueRangeUnavailableReason: null } : none(reason));
+
+/** `inputs.formula` of the signup chain (`signupCostIndexPoint`). */
+export const SIGNUP_CHAIN_FORMULA = "click_cost / visit_to_signup_share";
+
+/**
+ * PURE. The DERIVED range of an EXPECTED value (OUTCOME-RANGES-1125): the 20th / 80th percentile of the uncertainty the
+ * counts it was derived from carry, propagated through its own formula (same rules as `indexValueRange`). Never served on
+ * a measured value (`measured_value`: its range is `valueRange`) nor a null one. An expected value whose counts are not
+ * on the point (the outcome prices' quoted meeting price) reads `inputs_not_recorded`.
+ *   - meeting chain (`interest_*`): the chained draws of `meetingChainRange`;
+ *   - signup chain: `signupChainRange`;
+ *   - expected cold email leg (`subject_cost_per_person_reached / leg_measured_rate`, `leg_measured_rate`): the leg's
+ *     measured rate is the uncertain part: Gamma on its outcomes for the cost, the Jeffreys interval for the rate.
+ */
+export function expectedValueRange(p: RangePointInput): RangeVerdict {
+  if (p.value === null || !Number.isFinite(p.value)) return none("no_value");
+  const inputs = (p.inputs ?? {}) as Record<string, unknown>;
+  if (inputs.valueKind !== "expected") return none("measured_value");
+  const seed = `${p.indexSlug}|${p.day ?? ""}|derived`;
+  const formula = typeof inputs.formula === "string" ? inputs.formula : null;
+  if (formula?.startsWith("interest_")) return some(meetingChainRange(p.metric, p.value, inputs, seed), "inputs_not_recorded");
+  if (formula === SIGNUP_CHAIN_FORMULA) return some(signupChainRange(p.value, inputs, seed), "inputs_not_recorded");
+  const legOutcomes = num(inputs, "legOutcomes");
+  const legReached = num(inputs, "legReached");
+  if (formula === "subject_cost_per_person_reached / leg_measured_rate" && legOutcomes !== null) return some(costPerOutcomeRange(p.value, legOutcomes), "no_outcome");
+  if (formula === "leg_measured_rate" && legOutcomes !== null && legReached !== null) return some(conversionRateRange(p.value, legOutcomes, legReached), "no_outcome");
+  return none("inputs_not_recorded");
+}
 
 /** PURE. The range served beside one stored index point (the list's latest day or one day of a series). */
 export function indexValueRange(p: RangePointInput): RangeVerdict {

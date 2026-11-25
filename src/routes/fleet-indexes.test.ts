@@ -94,7 +94,7 @@ describe("GET /public/indexes", () => {
     expect(res.status).toBe(200);
     expect(res.body.statusRule).toEqual({ signalMinOutcomes: 10, robustMinOutcomes: 30 });
     const bySlug = new Map(res.body.indexes.map((i: { slug: string }) => [i.slug, i]));
-    expect(bySlug.size).toBe(7);
+    expect(bySlug.size).toBe(8);
     expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ value: 4.35, unit: "usd", valuePer: "per website visit", status: "signal", day: "2026-10-18" });
     expect(bySlug.get("cold-email-meeting-rate")).toMatchObject({ value: null, status: "noise", unavailableReason: "not_recorded_yet", day: null });
     // A visitor reads the REAL VENDOR COST series (PUBLIC-VENDOR-COST-1031), never the billed one.
@@ -151,6 +151,23 @@ describe("GET /public/indexes/:slug", () => {
     expect(bySlug.get("cold-email-meeting-rate")).toMatchObject({ valueRange: null, valueRangeUnavailableReason: "no_value" });
   });
 
+  it("serves a DERIVED range beside an expected value, none beside a measured one; the signup index is listed (OUTCOME-RANGES-1125)", async () => {
+    const meetingInputs = { valueKind: "expected", method: "expected_pipe_chain", formula: "interest_cost / meeting_rate + meeting_pipe_cost_per_meeting", interestIndexValue: 61.97, interestOutcomes: 51, positiveRepliesActedOn: 16, meetingsBooked: 5, meetingPipeSpentUsd: 2.34 };
+    store.readLatestFleetIndexPoints.mockResolvedValue([
+      pointRow("cold-email-cost-per-click", "2026-11-25", 5.29),
+      { ...pointRow("cold-email-cost-per-meeting", "2026-11-25", 198.78), contacted: null, outcomes: 5, status: "noise", inputs: meetingInputs },
+      { ...pointRow("cold-email-cost-per-signup", "2026-11-25", null), contacted: null, outcomes: 0, unavailableReason: "visit_to_signup_not_measured", inputs: { valueKind: "expected" } },
+    ]);
+    const res = await request(app).get("/public/indexes");
+    const bySlug = new Map(res.body.indexes.map((i: { slug: string }) => [i.slug, i]));
+    expect(bySlug.get("cold-email-cost-per-click")).toMatchObject({ derivedValueRange: null, derivedValueRangeUnavailableReason: "measured_value" });
+    const mtg = bySlug.get("cold-email-cost-per-meeting") as { valueKind: string; valueRange: null; derivedValueRange: { low: number; high: number }; derivedValueRangeUnavailableReason: null };
+    expect(mtg).toMatchObject({ valueKind: "expected", valueRange: null, valueRangeUnavailableReason: "expected_value", derivedValueRangeUnavailableReason: null });
+    expect(mtg.derivedValueRange.low).toBeLessThanOrEqual(198.78);
+    expect(mtg.derivedValueRange.high).toBeGreaterThanOrEqual(198.78);
+    expect(bySlug.get("cold-email-cost-per-signup")).toMatchObject({ outcome: "signup", value: null, unavailableReason: "visit_to_signup_not_measured", valueKind: "expected", derivedValueRange: null, derivedValueRangeUnavailableReason: "no_value" });
+  });
+
   it("404 on an unknown index", async () => {
     const res = await request(app).get("/public/indexes/nope");
     expect(res.status).toBe(404);
@@ -167,6 +184,7 @@ describe("GET /public/indexes/:slug", () => {
       ["cold-email-positive-reply-rate", "Cold Email Positive Reply Rate Index"],
       ["cold-email-cost-per-meeting", "Cold Email Cost Per Meeting Index"],
       ["cold-email-meeting-rate", "Cold Email Meeting Rate Index"],
+      ["cold-email-cost-per-signup", "Cold Email Cost Per Signup Index"],
       ["cold-email-cost-per-engaged-lead", "Cold Email Cost Per Engaged Lead Index"],
     ]);
     expect(JSON.stringify(list.body.indexes)).not.toMatch(/Distribute\.you/);

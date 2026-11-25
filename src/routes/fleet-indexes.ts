@@ -20,10 +20,12 @@ import {
   type FleetIndexDefinition,
   type FleetIndexPoint,
   type MeetingPipeEvidence,
+  type VisitToSignupStep,
 } from "../lib/fleet-indexes.js";
 import { lastRecordedTodayAt, readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
-import { RANGE_HIGH_PERCENTILE, RANGE_LOW_PERCENTILE, RANGE_RULE_TEXT, indexValueRange } from "../lib/fleet-index-range.js";
+import { RANGE_HIGH_PERCENTILE, RANGE_LOW_PERCENTILE, RANGE_RULE_TEXT, expectedValueRange, indexValueRange, type RangePointInput } from "../lib/fleet-index-range.js";
+import { readStepRateBook } from "../lib/script-value-rating-io.js";
 import { vendorLegPrice, vendorPooled, vendorRankingRows, type IndexRow, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
 import { dailyBookSinceDay, loadDailyLedgerBook, runStartUntilOf, SCRIPTS_FIRST_DAY } from "../lib/ledger-book.js";
 import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
@@ -68,10 +70,13 @@ function valueKindOf(row: FleetIndexPointRow | undefined): "measured" | "expecte
 /** How the likely range beside every value is read (INDEX-RANGE-1125), for the fine print. */
 const RANGE_RULE = { lowPercentile: RANGE_LOW_PERCENTILE, highPercentile: RANGE_HIGH_PERCENTILE, text: RANGE_RULE_TEXT } as const;
 
-/** The likely range of one stored point (INDEX-RANGE-1125): null + reason on a null or expected value. */
+/**
+ * The likely range of one stored point (INDEX-RANGE-1125): null + reason on a null or expected value; and the DERIVED
+ * range of an expected value (OUTCOME-RANGES-1125), null + `measured_value` on a measured one.
+ */
 function rangeOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
-  if (!row) return { valueRange: null, valueRangeUnavailableReason: "no_value" };
-  return indexValueRange({
+  if (!row) return { valueRange: null, valueRangeUnavailableReason: "no_value", derivedValueRange: null, derivedValueRangeUnavailableReason: "no_value" };
+  const input: RangePointInput = {
     indexSlug: def.slug,
     day: row.day,
     metric: def.metric,
@@ -80,7 +85,9 @@ function rangeOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined)
     outcomes: row.outcomes,
     contacted: row.contacted,
     inputs: row.inputs as Record<string, unknown> | null,
-  });
+  };
+  const derived = expectedValueRange(input);
+  return { ...indexValueRange(input), derivedValueRange: derived.valueRange, derivedValueRangeUnavailableReason: derived.valueRangeUnavailableReason };
 }
 
 function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
@@ -293,6 +300,8 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   const meetingLedger = await (await import("./research.js")).readLedgerMeetingCost();
   // While the ledger is not a price, the index serves the outcome prices' meeting price, labelled expected (MEETING-INDEX-EXPECTED-1025).
   const meetingExpected = await readExpectedMeetingPrice();
+  // The Cost Per Signup Index's step: counts only, the same on both cost bases (OUTCOME-RANGES-1125).
+  const visitToSignup = await readVisitToSignupStep();
   const meetingPipe: MeetingPipeEvidence | null = mbRanking?.computedAt && mbFleet ? { rows: mbRanking.rows, pooled: mbFleet.pooled } : null;
   if (!meetingPipe) console.warn("[features-service] fleet indexes: meeting pipe unreadable, meeting indexes not recorded this tick");
   const points = computeFleetIndexPoints({
@@ -302,6 +311,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
     brandEngagement,
     meetingLedger,
     meetingExpected,
+    visitToSignup,
     bestAvailableStandsIn: true,
   });
   // The meeting pipe's Research series (best workflow, median client) are recorded day by day beside the indexes.
@@ -311,7 +321,7 @@ export async function recordFleetIndexesNow(now = new Date()): Promise<number> {
   // The PUBLIC twin (PUBLIC-VENDOR-COST-1031): the same picks, every money value at real vendor cost. Its own failure
   // records nothing on the vendor basis this tick (logged); the billed series above stands.
   try {
-    const vendorPoints = await vendorIndexPoints({ coldEmail, mbRanking, mbFleet, meetingExpected });
+    const vendorPoints = await vendorIndexPoints({ coldEmail, mbRanking, mbFleet, meetingExpected, visitToSignup });
     await recordFleetIndexPoints(vendorPoints, now, "vendor");
     console.log(`[features-service] fleet indexes: recorded ${vendorPoints.length} vendor-cost point(s)`);
   } catch (error) {
@@ -350,6 +360,7 @@ async function vendorIndexPoints(billed: {
   mbRanking: Ranking;
   mbFleet: MeetingLegFleet | null;
   meetingExpected: ExpectedMeetingPrice | null;
+  visitToSignup: { step: VisitToSignupStep } | null;
 }): Promise<FleetIndexPoint[]> {
   const visitRows = billed.coldEmail.visit?.vendor ?? null;
   const replyRows = billed.coldEmail.reply?.vendor ?? null;
@@ -369,8 +380,25 @@ async function vendorIndexPoints(billed: {
     // vendor twin reads the vendor book through the same gate.
     meetingLedger: await (await import("./research.js")).readLedgerMeetingCost("vendor"),
     meetingExpected,
+    visitToSignup: billed.visitToSignup,
     bestAvailableStandsIn: true,
   });
+}
+
+/**
+ * The ledger's fleet Website visit -> Signup step (runs-service step rates, OUTCOME-RANGES-1125): consumed visits and the
+ * ones whose consuming run made a signup; a step the ledger never chained = its consumed visits, 0 led. Null (logged) when
+ * unreadable: the Cost Per Signup Index records nothing this tick.
+ */
+async function readVisitToSignupStep(): Promise<{ step: VisitToSignupStep } | null> {
+  try {
+    const book = await readStepRateBook(null);
+    const s = book.steps.find((r) => r.fromOutcome === "website_visit" && r.toOutcome === "signup");
+    return { step: s ? { consumedUnits: s.consumedUnits, ledUnits: s.ledUnits } : { consumedUnits: book.consumed.get("website_visit") ?? 0, ledUnits: 0 } };
+  } catch (error) {
+    console.error("[features-service] fleet indexes: the ledger's step rates are unreadable, the Cost Per Signup Index not recorded this tick:", error);
+    return null;
+  }
 }
 
 /** Every client brand's cold email engagement with its spend at real vendor cost (null, logged, when unreadable). */
