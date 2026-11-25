@@ -32,17 +32,28 @@ vi.mock("../lib/effective-conversion-rates.js", async (importOriginal) => ({
   getFleetLifetimeRevenueMedian: async () => ({ usd: 3000, offerCount: 12 }),
   peekFleetStatedMedians: () => null,
   // One brand's own rates: conversation -> meeting booked MEASURED at 50%, meeting attended -> paid STATED at 40%.
-  getBrandEffectiveRates: async () => ({
-    legs: [
-      { fromStep: "Positive reply", toStep: "Meeting booked", effectiveRatePct: 50, source: "measured" },
-      { fromStep: "Meeting attended", toStep: "Paid client", effectiveRatePct: 40, source: "manual" },
-      { fromStep: "Meeting booked", toStep: "Meeting attended", effectiveRatePct: 75, source: "default" },
-    ],
-  }),
+  // `ownRates.hang` = the measured walk never answers (a loaded lead-service, AGENT-SIGNUP-UX-1125).
+  getBrandEffectiveRates: async () =>
+    ownRates.hang
+      ? new Promise(() => {})
+      : {
+          legs: [
+            ...(ownRates.noMeasured ? [] : [{ fromStep: "Positive reply", toStep: "Meeting booked", effectiveRatePct: 50, source: "measured" }]),
+            { fromStep: "Meeting attended", toStep: "Paid client", effectiveRatePct: 40, source: "manual" },
+            { fromStep: "Meeting booked", toStep: "Meeting attended", effectiveRatePct: 75, source: "default" },
+          ],
+        },
 }));
+const ownRates = vi.hoisted(() => ({ hang: false, noMeasured: false }));
 vi.mock("../lib/brand-leg-economics-client.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  fetchBrandLegEconomics: async () => ({ legRates: [], offers: [{ offerId: "offer-1", lifetimeRevenueUsd: 12000 }] }),
+  fetchBrandLegEconomics: async () => ({
+    legRates: [
+      { fromStep: "Meeting attended", toStep: "Paid client", ratePct: 40, stated: true },
+      { fromStep: "Positive reply", toStep: "Meeting booked", ratePct: null, stated: false },
+    ],
+    offers: [{ offerId: "offer-1", lifetimeRevenueUsd: 12000 }],
+  }),
 }));
 
 // The steps the offer's business has (brand-service): never stated by default, so every per-offer read keeps today's list.
@@ -314,6 +325,40 @@ describe("agent catalogue lists (context-window sized)", () => {
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1" }).set(KEY)).body.reason).toBe("brand_required");
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "offer-1", brandId: "b1" }).set(KEY)).body.reason).toBe("org_required");
     expect((await request(app).get("/internal/catalogue/sales-funnels").query({ offerId: "nope", brandId: "b1" }).set({ ...KEY, "x-org-id": "o1" })).status).toBe(404);
+  });
+
+  it("never waits on the brand's measured rates past the budget: prices on its stated rates, same rows, says so (AGENT-SIGNUP-UX-1125)", async () => {
+    const H = { ...KEY, "x-org-id": "o1" };
+    const Q = { offerId: "offer-1", brandId: "b1", limit: 3, runnable: "true", containsChannels: "ai-meeting-booking" };
+    const prev = process.env.OFFER_OWN_RATES_BUDGET_MS;
+    process.env.OFFER_OWN_RATES_BUDGET_MS = "50";
+    try {
+      // In time: no reason, own rates read.
+      const inTime = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
+      expect(inTime.offer).toMatchObject({ ownRateLegs: 2, ownRatesUnavailableReason: null });
+      // A brand with nothing measured yet (a new offer): the in-time read prices on its stated rate only.
+      ownRates.noMeasured = true;
+      const statedOnly = (await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H)).body;
+      // The measured walk hangs: the read answers within the budget, on the same stated rate, same rows, same order.
+      ownRates.hang = true;
+      const t0 = Date.now();
+      const hung = await request(app).get("/internal/catalogue/sales-funnels").query(Q).set(H);
+      expect(Date.now() - t0).toBeLessThan(3000);
+      expect(hung.status).toBe(200);
+      expect(hung.body.offer).toMatchObject({ ownRateLegs: 1, ownRatesUnavailableReason: "measured_rates_still_computing" });
+      expect(hung.body.total).toBe(statedOnly.total);
+      expect(hung.body.rows).toEqual(statedOnly.rows);
+      // The detail read takes the same budget.
+      const victory = "lead_found_to_conversation@sales-cold-email-outreach+conversation_to_meeting_booked@ai-meeting-booking+meeting_booked_to_meeting_attended+meeting_attended_to_paid_client";
+      const detail = (await request(app).get(`/internal/catalogue/sales-funnels/${encodeURIComponent(victory)}`).query({ offerId: "offer-1", brandId: "b1" }).set(H)).body;
+      expect(detail.legs.map((l: { rateSource: string | null }) => l.rateSource)).toContain("offer_stated");
+      expect(detail.offer.ownRatesUnavailableReason).toBe("measured_rates_still_computing");
+    } finally {
+      ownRates.hang = false;
+      ownRates.noMeasured = false;
+      if (prev === undefined) delete process.env.OFFER_OWN_RATES_BUDGET_MS;
+      else process.env.OFFER_OWN_RATES_BUDGET_MS = prev;
+    }
   });
 
   it("per offer, sets aside every funnel and path through a step the offer's business does not have (owner 2026-10-12)", async () => {
