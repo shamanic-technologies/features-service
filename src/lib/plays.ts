@@ -179,9 +179,18 @@ export function scriptsUnjudgedOnTactic<S extends { outcome: string; dynasty: st
   return [...new Set(out)].sort();
 }
 
-export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[]): Map<string, Map<string, boolean>> {
+/**
+ * PURE: `<kind>|<key>` -> tactic id -> verdict. OPT-IN-CURRENT-VERDICT-1125: on an OPT-IN script tactic (`tactics` given)
+ * a verdict judged on ANOTHER wording of the tactic is no verdict (`optInRefusal` then keeps the script out until it is
+ * judged on today's words). Why: a reworded tactic's old verdicts stayed on scripts that were not runnable when it was
+ * re-judged; back in the catalogue, a stale « no » made such a script not opt-in at all and every campaign kept it (prod
+ * 2026-11-25, a path proposing hot leads through the Copilot). Every other tactic keeps its old verdict until re-judged.
+ */
+export function writerTacticsBySubject(rows: readonly WriterTacticVerdictRow[], tactics?: ReadonlyMap<string, Pick<Tactic, "optIn" | "description">>): Map<string, Map<string, boolean>> {
   const out = new Map<string, Map<string, boolean>>();
   for (const r of rows) {
+    const t = tactics?.get(r.tacticId);
+    if (r.subjectKind === "script" && t?.optIn === true && r.judgedDescription !== t.description) continue;
     const k = writerSubjectKey(r.subjectKind, r.subjectKey);
     const m = out.get(k) ?? new Map<string, boolean>();
     m.set(r.tacticId, r.verdict);
@@ -482,14 +491,15 @@ export function buildPlayCatalogue(input: { tactics: readonly Tactic[]; strategi
     else playsByPipe.set(p.pipeId, [...(playsByPipe.get(p.pipeId) ?? []), p]);
   }
   for (const list of playsByPipe.values()) list.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || (a.strategyId < b.strategyId ? -1 : 1));
+  const tacticsById = new Map(input.tactics.map((t) => [t.id, t]));
   return {
-    tactics: new Map(input.tactics.map((t) => [t.id, t])),
+    tactics: tacticsById,
     strategies: new Map(input.strategies.map((s) => [s.id, s])),
     playsByPipe,
     retiredByPipe,
     tacticsByDynasty: currentTacticsByDynasty(input.verdicts),
     sweepsByTactic: new Map((input.sweeps ?? []).map((w) => [w.tacticId, w])),
-    tacticsByWriter: writerTacticsBySubject(input.writerVerdicts ?? []),
+    tacticsByWriter: writerTacticsBySubject(input.writerVerdicts ?? [], tacticsById),
   };
 }
 
