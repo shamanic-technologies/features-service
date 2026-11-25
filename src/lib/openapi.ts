@@ -6799,6 +6799,28 @@ const fleetIndexStatusRuleSchema = z.object({ signalMinOutcomes: z.number().int(
 const fleetIndexCostBasisSchema = z.literal("vendor").describe("Every money value is real vendor cost, before any markup, whole history (PUBLIC-VENDOR-COST-1031).");
 const fleetIndexCostBasisTextSchema = z.string().describe("The cost basis in one plain sentence, for a label.");
 
+const fleetIndexValueRangeSchema = registry.register(
+  "FleetIndexValueRange",
+  z
+    .object({
+      low: z.number().describe("20th percentile of the value's uncertainty, same unit and cost basis as `value`; low <= value."),
+      high: z.number().describe("80th percentile of the value's uncertainty, same unit and cost basis as `value`; value <= high."),
+    })
+    .nullable()
+    .describe(
+      "The likely range of `value` (INDEX-RANGE-1125): its 20th to 80th percentile, from the outcomes and people emailed it rests on (Jeffreys posterior: Gamma(k + 1/2) on the outcome count for a cost, the Jeffreys interval Beta(k + 1/2, n - k + 1/2) for a rate, 4,000 seeded draws through the formula for a chained meeting index, a bootstrap of the median over clients for the client-median index). Null when `value` is null, when the value is `expected` (a quoted price, never given a range), or when the counts are not recorded: `valueRangeUnavailableReason` says which.",
+    ),
+);
+const fleetIndexRangeReasonSchema = z
+  .string()
+  .nullable()
+  .describe(
+    "Why `valueRange` is null (null when it is served): `no_value` (value is null), `expected_value` (a quoted price, not a measurement), `no_outcome` (no outcome behind a cost), `people_emailed_not_counted`, `inputs_not_recorded` (a chained index day missing its counts), `range_not_recorded_that_day` (client-median index, a day recorded before the range was recorded beside it).",
+  );
+const fleetIndexRangeRuleSchema = z
+  .object({ lowPercentile: z.literal(20), highPercentile: z.literal(80), text: z.string().describe("The range rule in one plain sentence, for the fine print.") })
+  .describe("How every `valueRange` is read.");
+
 const fleetIndexSummarySchema = registry.register(
   "FleetIndexSummary",
   z.object({
@@ -6821,6 +6843,8 @@ const fleetIndexSummarySchema = registry.register(
     unavailableReason: z.string().nullable().describe("Why `value` is null: `not_recorded_yet`, `no_mature_workflow` (days recorded before 2026-11-09 only), `no_script_ran_yet` / `nothing_runnable_on_pipe` (cold email indexes since PUBLIC-INDEXES-NULL-1117: read on the `email_sent` Engine's scripts, the best mature runnable one, else the best available one once its outcomes reach the noise bar of 10, status noise), `no_meeting_measured`, `not_measured` (a cold email index: no runnable script has reached 10 outcomes yet; `outcomes` / `contacted` say what it rests on so far, INDEX-VISITS-1117), `not_enough_clients` (engaged lead: fewer than 2 clients with spend and an engaged lead), `ledger_being_recomputed` / `ledger_coverage_short` / `no_meeting_priced_on_ledger` (Cost Per Meeting Index, with no expected price either), `vendor_cost_unknown` (more than 1% of the spend behind the value has no known vendor cost: the value is withheld rather than read low)."),
     valueKind: z.enum(["measured", "expected"]).describe("`expected`: the value is a quoted price, not a measurement; show it labelled \"expected\". An expected value is at real vendor cost too. The Cost Per Meeting Index serves the outcome prices' meeting price (`/public/stats/outcome-prices`) while the cost ledger is being recomputed or under 95% of the spend declared (`inputs.ledgerUnavailableReason`). Every other value is `measured`."),
     recordedAt: z.string().nullable(),
+    valueRange: fleetIndexValueRangeSchema,
+    valueRangeUnavailableReason: fleetIndexRangeReasonSchema,
   }),
 );
 
@@ -6834,7 +6858,7 @@ registry.registerPath({
   responses: {
     200: {
       description: "Every index",
-      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, costBasis: fleetIndexCostBasisSchema, costBasisText: fleetIndexCostBasisTextSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
+      content: { "application/json": { schema: z.object({ statusRule: fleetIndexStatusRuleSchema, rangeRule: fleetIndexRangeRuleSchema, costBasis: fleetIndexCostBasisSchema, costBasisText: fleetIndexCostBasisTextSchema, indexes: z.array(fleetIndexSummarySchema) }) } },
     },
     500: { description: "Store unreadable", content: { "application/json": { schema: errorResponse } } },
   },
@@ -6860,6 +6884,7 @@ registry.registerPath({
             basisRule: z
               .object({ recorded: z.string(), recomputed: z.string() })
               .describe("What each `points[].basis` means, one plain sentence each, for a label beside the curve."),
+            rangeRule: fleetIndexRangeRuleSchema,
             index: fleetIndexSummarySchema,
             points: z.array(
               z.object({
@@ -6874,6 +6899,8 @@ registry.registerPath({
                 basis: z.enum(["recorded", "recomputed"]).describe("`recorded`: written live that day. `recomputed`: rebuilt later as of that day (`basisRule`)."),
                 valueKind: z.enum(["measured", "expected"]).describe("Same as the summary's `valueKind`, for this day."),
                 inputs: z.record(z.string(), z.union([z.number(), z.string(), z.null()])).describe("The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."),
+                valueRange: fleetIndexValueRangeSchema,
+                valueRangeUnavailableReason: fleetIndexRangeReasonSchema,
               }),
             ),
           }),

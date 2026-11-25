@@ -34014,6 +34014,25 @@
         ],
         "description": "THE BENCHMARK ON ONE LEG, over MATURE workflows only (features-service#1196)."
       },
+      "FleetIndexValueRange": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "low": {
+            "type": "number",
+            "description": "20th percentile of the value's uncertainty, same unit and cost basis as `value`; low <= value."
+          },
+          "high": {
+            "type": "number",
+            "description": "80th percentile of the value's uncertainty, same unit and cost basis as `value`; value <= high."
+          }
+        },
+        "required": [
+          "low",
+          "high"
+        ],
+        "description": "The likely range of `value` (INDEX-RANGE-1125): its 20th to 80th percentile, from the outcomes and people emailed it rests on (Jeffreys posterior: Gamma(k + 1/2) on the outcome count for a cost, the Jeffreys interval Beta(k + 1/2, n - k + 1/2) for a rate, 4,000 seeded draws through the formula for a chained meeting index, a bootstrap of the median over clients for the client-median index). Null when `value` is null, when the value is `expected` (a quoted price, never given a range), or when the counts are not recorded: `valueRangeUnavailableReason` says which."
+      },
       "FleetIndexSummary": {
         "type": "object",
         "properties": {
@@ -34117,6 +34136,14 @@
           "recordedAt": {
             "type": "string",
             "nullable": true
+          },
+          "valueRange": {
+            "$ref": "#/components/schemas/FleetIndexValueRange"
+          },
+          "valueRangeUnavailableReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why `valueRange` is null (null when it is served): `no_value` (value is null), `expected_value` (a quoted price, not a measurement), `no_outcome` (no outcome behind a cost), `people_emailed_not_counted`, `inputs_not_recorded` (a chained index day missing its counts), `range_not_recorded_that_day` (client-median index, a day recorded before the range was recorded beside it)."
           }
         },
         "required": [
@@ -34138,7 +34165,9 @@
           "workflowDynastyName",
           "unavailableReason",
           "valueKind",
-          "recordedAt"
+          "recordedAt",
+          "valueRange",
+          "valueRangeUnavailableReason"
         ]
       },
       "FunnelLeg": {
@@ -57326,6 +57355,33 @@
                         "robustMinOutcomes"
                       ]
                     },
+                    "rangeRule": {
+                      "type": "object",
+                      "properties": {
+                        "lowPercentile": {
+                          "type": "number",
+                          "enum": [
+                            20
+                          ]
+                        },
+                        "highPercentile": {
+                          "type": "number",
+                          "enum": [
+                            80
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "The range rule in one plain sentence, for the fine print."
+                        }
+                      },
+                      "required": [
+                        "lowPercentile",
+                        "highPercentile",
+                        "text"
+                      ],
+                      "description": "How every `valueRange` is read."
+                    },
                     "costBasis": {
                       "type": "string",
                       "enum": [
@@ -57346,6 +57402,7 @@
                   },
                   "required": [
                     "statusRule",
+                    "rangeRule",
                     "costBasis",
                     "costBasisText",
                     "indexes"
@@ -57442,6 +57499,33 @@
                       ],
                       "description": "What each `points[].basis` means, one plain sentence each, for a label beside the curve."
                     },
+                    "rangeRule": {
+                      "type": "object",
+                      "properties": {
+                        "lowPercentile": {
+                          "type": "number",
+                          "enum": [
+                            20
+                          ]
+                        },
+                        "highPercentile": {
+                          "type": "number",
+                          "enum": [
+                            80
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "The range rule in one plain sentence, for the fine print."
+                        }
+                      },
+                      "required": [
+                        "lowPercentile",
+                        "highPercentile",
+                        "text"
+                      ],
+                      "description": "How every `valueRange` is read."
+                    },
                     "index": {
                       "$ref": "#/components/schemas/FleetIndexSummary"
                     },
@@ -57517,6 +57601,14 @@
                               ]
                             },
                             "description": "The figures the value was built from (spend, outcomes, the reply -> meeting counts...)."
+                          },
+                          "valueRange": {
+                            "$ref": "#/components/schemas/FleetIndexValueRange"
+                          },
+                          "valueRangeUnavailableReason": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Why `valueRange` is null (null when it is served): `no_value` (value is null), `expected_value` (a quoted price, not a measurement), `no_outcome` (no outcome behind a cost), `people_emailed_not_counted`, `inputs_not_recorded` (a chained index day missing its counts), `range_not_recorded_that_day` (client-median index, a day recorded before the range was recorded beside it)."
                           }
                         },
                         "required": [
@@ -57530,7 +57622,9 @@
                           "unavailableReason",
                           "basis",
                           "valueKind",
-                          "inputs"
+                          "inputs",
+                          "valueRange",
+                          "valueRangeUnavailableReason"
                         ]
                       }
                     }
@@ -57540,6 +57634,7 @@
                     "costBasis",
                     "costBasisText",
                     "basisRule",
+                    "rangeRule",
                     "index",
                     "points"
                   ]
