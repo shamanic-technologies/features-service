@@ -124,6 +124,33 @@ describe("GET /public/indexes/:slug", () => {
     expect(res.body.basisRule.recomputed).toMatch(/end of that day/);
   });
 
+  it("serves a likely range (20th-80th percentile) beside every measured value, none beside an expected one (INDEX-RANGE-1125)", async () => {
+    store.readFleetIndexSeries.mockResolvedValue([
+      pointRow("cold-email-click-rate", "2026-10-18", 2.08),
+      { ...pointRow("cold-email-click-rate", "2026-10-19", 2.1), inputs: { valueKind: "expected" } },
+    ]);
+    const res = await request(app).get("/public/indexes/cold-email-click-rate");
+    expect(res.status).toBe(200);
+    expect(res.body.rangeRule).toMatchObject({ lowPercentile: 20, highPercentile: 80 });
+    const [measured, expected] = res.body.points;
+    expect(measured.valueRangeUnavailableReason).toBeNull();
+    expect(measured.valueRange.low).toBeLessThanOrEqual(2.08);
+    expect(measured.valueRange.high).toBeGreaterThanOrEqual(2.08);
+    expect(expected).toMatchObject({ valueRange: null, valueRangeUnavailableReason: "expected_value" });
+    expect(res.body.index).toMatchObject({ valueRange: null, valueRangeUnavailableReason: "expected_value" });
+  });
+
+  it("the list carries the range too; a never-recorded index has none (INDEX-RANGE-1125)", async () => {
+    store.readLatestFleetIndexPoints.mockResolvedValue([pointRow("cold-email-cost-per-click", "2026-10-18", 4.35)]);
+    const res = await request(app).get("/public/indexes");
+    expect(res.body.rangeRule.text).toMatch(/20th to 80th/);
+    const bySlug = new Map(res.body.indexes.map((i: { slug: string }) => [i.slug, i]));
+    const cpc = bySlug.get("cold-email-cost-per-click") as { valueRange: { low: number; high: number } };
+    expect(cpc.valueRange.low).toBeLessThanOrEqual(4.35);
+    expect(cpc.valueRange.high).toBeGreaterThanOrEqual(4.35);
+    expect(bySlug.get("cold-email-meeting-rate")).toMatchObject({ valueRange: null, valueRangeUnavailableReason: "no_value" });
+  });
+
   it("404 on an unknown index", async () => {
     const res = await request(app).get("/public/indexes/nope");
     expect(res.status).toBe(404);

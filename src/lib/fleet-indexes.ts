@@ -36,6 +36,7 @@
  *
  * PURE: the recorder (`fleet-index-recorder.ts`) reads the inputs, this turns them into points.
  */
+import { CLIENT_RANGE_HIGH_KEY, CLIENT_RANGE_LOW_KEY, clientMedianRange } from "./fleet-index-range.js";
 import type { LegWorkflowRankingRow } from "./leg-workflow-ranking.js";
 import type { IndexRow, PooledPipe } from "./fleet-index-vendor.js";
 import { VENDOR_COST_UNKNOWN } from "./public-vendor-cost.js";
@@ -318,7 +319,11 @@ export function engagedLeadPoint(brands: readonly BrandEngagement[]): FleetIndex
   const inputs = { population: "clients_with_engaged_lead_and_spend", clicks: "judged_human_over_reach", clients: priced.length, engagedLeads, minClients: MIN_ENGAGED_LEAD_CLIENTS, ...(unknown > 0 ? { clientsVendorCostUnknown: unknown } : {}) };
   if (priced.length < MIN_ENGAGED_LEAD_CLIENTS) return clientPoint(def, null, priced.length, "not_enough_clients", inputs);
   const value = median(priced.map((b) => b.spendCents / 100 / b.engaged).sort((a, b) => a - b));
-  return clientPoint(def, value, priced.length, null, inputs);
+  // INDEX-RANGE-1125: the likely range (20th-80th percentile) of the median, recorded beside it: the per-client figures
+  // it is drawn from are not stored, so it cannot be recomputed at read time.
+  const range = clientMedianRange(value, priced.map((b) => ({ engaged: b.engaged, spendUsd: b.spendCents / 100 })), `${def.slug}|${priced.length}|${value}`);
+  const withRange = range ? { ...inputs, [CLIENT_RANGE_LOW_KEY]: range.low, [CLIENT_RANGE_HIGH_KEY]: range.high } : inputs;
+  return clientPoint(def, value, priced.length, null, withRange);
 }
 
 /** The row a client's money goes to today: best mature workflow that can still run. */

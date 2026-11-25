@@ -23,6 +23,7 @@ import {
 } from "../lib/fleet-indexes.js";
 import { lastRecordedTodayAt, readFleetIndexSeries, readLatestFleetIndexPoints, recordFleetIndexPoints } from "../lib/fleet-index-store.js";
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
+import { RANGE_HIGH_PERCENTILE, RANGE_LOW_PERCENTILE, RANGE_RULE_TEXT, indexValueRange } from "../lib/fleet-index-range.js";
 import { vendorLegPrice, vendorPooled, vendorRankingRows, type IndexRow, type PipeVendorTwin } from "../lib/fleet-index-vendor.js";
 import { dailyBookSinceDay, loadDailyLedgerBook, runStartUntilOf, SCRIPTS_FIRST_DAY } from "../lib/ledger-book.js";
 import { readRunnableScriptsForCatalogue, scriptDynastyKey } from "../lib/script-catalogue-client.js";
@@ -64,6 +65,24 @@ function valueKindOf(row: FleetIndexPointRow | undefined): "measured" | "expecte
   return inputs?.valueKind === "expected" ? "expected" : "measured";
 }
 
+/** How the likely range beside every value is read (INDEX-RANGE-1125), for the fine print. */
+const RANGE_RULE = { lowPercentile: RANGE_LOW_PERCENTILE, highPercentile: RANGE_HIGH_PERCENTILE, text: RANGE_RULE_TEXT } as const;
+
+/** The likely range of one stored point (INDEX-RANGE-1125): null + reason on a null or expected value. */
+function rangeOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
+  if (!row) return { valueRange: null, valueRangeUnavailableReason: "no_value" };
+  return indexValueRange({
+    indexSlug: def.slug,
+    day: row.day,
+    metric: def.metric,
+    outcome: def.outcome,
+    value: row.value,
+    outcomes: row.outcomes,
+    contacted: row.contacted,
+    inputs: row.inputs as Record<string, unknown> | null,
+  });
+}
+
 function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefined) {
   return {
     slug: def.slug,
@@ -85,6 +104,7 @@ function summaryOf(def: FleetIndexDefinition, row: FleetIndexPointRow | undefine
     unavailableReason: row ? row.unavailableReason : "not_recorded_yet",
     valueKind: valueKindOf(row),
     recordedAt: row ? row.recordedAt.toISOString() : null,
+    ...rangeOf(def, row),
   };
 }
 
@@ -92,7 +112,7 @@ router.get("/public/indexes", async (_req, res) => {
   try {
     // Every money value a visitor reads is real vendor cost, before our markup, whole history (PUBLIC-VENDOR-COST-1031).
     const latest = new Map((await readLatestFleetIndexPoints("vendor")).map((r) => [r.indexSlug, r]));
-    res.json({ statusRule: STATUS_RULE, costBasis: "vendor", costBasisText: PUBLIC_COST_BASIS_TEXT, indexes: FLEET_INDEXES.map((d) => summaryOf(d, latest.get(d.slug))) });
+    res.json({ statusRule: STATUS_RULE, rangeRule: RANGE_RULE, costBasis: "vendor", costBasisText: PUBLIC_COST_BASIS_TEXT, indexes: FLEET_INDEXES.map((d) => summaryOf(d, latest.get(d.slug))) });
   } catch (error) {
     console.error("[features-service] GET /public/indexes failed:", error);
     res.status(500).json({ error: "fleet_indexes_unreadable" });
@@ -110,6 +130,7 @@ router.get("/public/indexes/:slug", async (req, res) => {
     res.json({
       statusRule: STATUS_RULE,
       basisRule: BASIS_RULE,
+      rangeRule: RANGE_RULE,
       costBasis: "vendor",
       costBasisText: PUBLIC_COST_BASIS_TEXT,
       index: summaryOf(def, series[series.length - 1]),
@@ -125,6 +146,7 @@ router.get("/public/indexes/:slug", async (req, res) => {
         basis: r.basis,
         valueKind: valueKindOf(r),
         inputs: r.inputs,
+        ...rangeOf(def, r),
       })),
     });
   } catch (error) {
