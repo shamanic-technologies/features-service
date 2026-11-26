@@ -132,11 +132,16 @@ export async function fetchFleetCampaignRows(): Promise<unknown[]> {
 // ── One campaign's sales funnel, by its id alone (BEST-TPL-LLM-1022: a run knows its campaign, not its org) ─────────
 
 const LIST_SHARE_MS = 60_000;
+/** `at` = when the read was STARTED: it holds every campaign campaign-service had created by then. */
 let listShared: { at: number; value: Promise<unknown[]> } | null = null;
 
 /** Every campaign row of every org, shared 60 s (a run-time reader calls it once per send). FAIL-LOUD. */
-function readCampaignList(): Promise<unknown[]> {
-  if (listShared && Date.now() - listShared.at < LIST_SHARE_MS) return listShared.value;
+function readCampaignList(): { at: number; value: Promise<unknown[]> } {
+  if (listShared && Date.now() - listShared.at < LIST_SHARE_MS) return listShared;
+  return startCampaignListRead();
+}
+
+function startCampaignListRead(): { at: number; value: Promise<unknown[]> } {
   const value = (async () => {
     const url = process.env.CAMPAIGN_SERVICE_URL;
     const apiKey = process.env.CAMPAIGN_SERVICE_API_KEY;
@@ -147,11 +152,29 @@ function readCampaignList(): Promise<unknown[]> {
     if (!Array.isArray(data.campaigns)) throw new Error("campaign-service /campaigns/list returned no campaigns array");
     return data.campaigns;
   })();
-  listShared = { at: Date.now(), value };
+  const entry = { at: Date.now(), value };
+  listShared = entry;
   value.catch(() => {
-    if (listShared?.value === value) listShared = null;
+    if (listShared === entry) listShared = null;
   });
-  return value;
+  return entry;
+}
+
+/**
+ * The row campaign-service lists for `campaignId` at the moment of the ask, however young the campaign
+ * (NEW-CAMPAIGN-STRATEGY-404-1126). The shared copy answers a hit; a MISS on a copy started before this ask is re-read
+ * once from campaign-service (askers missing together share that read), so a campaign created inside the share window
+ * is found and only a campaign campaign-service truly does not list reads as absent. Prod 2026-11-26: unit e2f7850d,
+ * created 03:27:16, read 404 `campaign_not_found` at 03:28:06 off a copy taken before it existed.
+ */
+async function findListedCampaign(campaignId: string): Promise<unknown | undefined> {
+  const askedAt = Date.now();
+  const isIt = (raw: unknown) => (raw as { id?: unknown }).id === campaignId;
+  const first = readCampaignList();
+  const hit = (await first.value).find(isIt);
+  if (hit !== undefined || first.at >= askedAt) return hit;
+  const fresh = listShared && listShared.at >= askedAt ? listShared : startCampaignListRead();
+  return (await fresh.value).find(isIt);
 }
 
 /**
@@ -159,7 +182,7 @@ function readCampaignList(): Promise<unknown[]> {
  * `found:false` = campaign-service lists no such campaign.
  */
 export async function fetchCampaignSalesFunnelId(campaignId: string): Promise<{ found: boolean; salesFunnelId: string | null }> {
-  const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as { salesFunnelId?: unknown } | undefined;
+  const row = (await findListedCampaign(campaignId)) as { salesFunnelId?: unknown } | undefined;
   if (!row) return { found: false, salesFunnelId: null };
   return { found: true, salesFunnelId: typeof row.salesFunnelId === "string" && row.salesFunnelId ? row.salesFunnelId : null };
 }
@@ -185,7 +208,7 @@ export async function fetchCampaignPipe(
       brandId: string | null;
     }
 > {
-  const row = (await readCampaignList()).find((raw) => (raw as { id?: unknown }).id === campaignId) as
+  const row = (await findListedCampaign(campaignId)) as
     | { featureSlug?: unknown; legKey?: unknown; salesFunnelId?: unknown; salesFunnelCampaignId?: unknown; orgId?: unknown; brandIds?: unknown }
     | undefined;
   if (!row) return { found: false };
