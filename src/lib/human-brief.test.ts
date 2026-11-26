@@ -74,12 +74,20 @@ describe("the human brief's shape", () => {
     expect(systemPrompt).toContain("one or two short sentences");
     expect(systemPrompt).toContain("by cold email");
     expect(systemPrompt).toContain("At most 40 words");
-    expect(systemPrompt).toContain("only the brand's current clients");
+    expect(systemPrompt).toContain("Each rule the input gives on a channel");
     expect(message).toContain("Payroll audit");
     expect(message).toContain("HR leaders at mid-size companies");
     expect(message).toContain("Sends only to confirmed addresses.");
     expect(message).not.toContain("Your Team Reply Closing");
     expect(message).not.toContain("Use only these channels");
+  });
+
+  // FOLLOWUP-ONLY-NEW-CAMPAIGN-1126: the writer once read a list of example rules (« only people due for a follow-up »,
+  // « only leads »…) and wrote one into a brief whose input stated none (prod 2026-11-26, a new client's only cold
+  // email campaign judged follow-up-only on Lead found: 0 leads). It reads no rule but the input's own.
+  it("the writer is shown no example rule it could copy into a brief whose input states none", () => {
+    const { systemPrompt } = humanBriefPrompt({ offer: { name: "Voice Cloning", description: null }, audiences: ["Agency founders"], targetLabel: "Meeting booked", channels: [], replacing: null });
+    for (const example of ["due for a follow-up", "only leads", "current clients", "already emailed", "confirmed email", "the brand's own team"]) expect(systemPrompt).not.toContain(example);
   });
 });
 

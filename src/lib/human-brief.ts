@@ -73,7 +73,7 @@ export function robotBriefSplit(brief: string | null | undefined, stepLabels: Re
 /** PURE: does this text still hold a robot line anywhere (the AC sweep: none may start with one)? */
 export const isRobotBrief = (brief: string | null | undefined, stepLabels: ReadonlySet<string>): boolean => robotBriefSplit(brief, stepLabels) !== null;
 
-export const HUMAN_BRIEF_RULE = "human-brief-v3";
+export const HUMAN_BRIEF_RULE = "human-brief-v4";
 
 /** PURE: what the writer reads. Owner words: short, concise, clear, the client's value, how in a few plain words. */
 export function humanBriefPrompt(input: HumanBriefInput): { systemPrompt: string; message: string } {
@@ -81,7 +81,7 @@ export function humanBriefPrompt(input: HumanBriefInput): { systemPrompt: string
     "You write the brief of one B2B sales campaign: one or two short sentences, in plain English, that a busy founder reads in two seconds and agrees with.",
     "Say what the campaign aims at, in the client's words of value (who it reaches and what it brings them), then how, in a few plain words (for example \"by cold email\").",
     "Name a channel only by what it does in everyday words (cold email, LinkedIn, X posts, our AI books the meetings). Leave out the steps the client's own team works.",
-    "A rule on WHO a channel reaches or answers (only the brand's current clients, only the brand's own team, only leads, only confirmed email addresses, only people due for a follow-up, only people already emailed) or on HOW it writes (only pitching the offer, written by a named AI model) is a decision of the client: state each one clearly, in its own short sentence starting with \"Only\" or naming the model.",
+    "Each rule the input gives on a channel (after \"with this rule:\") or the old brief states, on who it reaches or answers or on how it writes, is a decision of the client: state each one clearly, in its own short sentence starting with \"Only\" or naming the model.",
     "At most 40 words in total.",
     "Never list channels, steps or strategies. Never write a label followed by a colon. No dashes, no bullet points, no line breaks, no quotes.",
     "Never use the pattern \"X, not Y\" or \"not X but Y\". Never start a sentence with It, They or This. Plain words, one idea per sentence.",
