@@ -33,6 +33,11 @@ describe("writerRunOf (MODEL-TAG-EVERY-AI-MESSAGE-1126)", () => {
     expect(writerRunOf({ sentAt: "2026-11-25T00:00:00.000Z", statedRunId: SEND }, LEDGER)).toMatchObject({ runId: WRITER, sentByOurRun: true });
   });
 
+  it("the run the sender names consumed the written message while a child declared the send: followed", () => {
+    const parent = [...LEDGER, occ({ id: "p", runId: "script-run", direction: "consumed", outcomeKey: "message_written", declaredAt: "2026-11-24T06:09:00.000Z", consumption: { sourceRunId: WRITER, provenance: "known" } })];
+    expect(writerRunOf({ sentAt: "2026-11-24T06:09:34.700Z", statedRunId: "script-run" }, parent)).toEqual({ runId: WRITER, sentByOurRun: true, reason: null });
+  });
+
   it("no send in the ledger: the run lead-service states wrote it (workflow era)", () => {
     expect(writerRunOf({ sentAt: "2026-10-01T00:00:00.000Z", statedRunId: "wf-run" }, LEDGER)).toEqual({ runId: "wf-run", sentByOurRun: false, reason: null });
   });

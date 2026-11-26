@@ -7,7 +7,8 @@
  * (prod 2026-11-24, Living Vital: the writer asked DeepSeek Flash, chat-service billed GLM 5.3 Flash).
  *
  *  1. The SEND: the `message_sent` Unit our run declared for the person, found by a recorded fact only:
- *       a. the run lead-service names for the message (`writtenBy.runId`) when that run declared the send, else
+ *       a. the run lead-service names for the message (`writtenBy.runId`, the sender's own record of the run that asked
+ *          for the send) when that run declared the send or consumed a written message, else
  *       b. the send declared at the message's own instant, to the millisecond (the sender declares the Unit at the
  *          time it records the send: every email of the last 7 days matched exactly, 4,078 of 4,078); two runs at
  *          that instant = ambiguous, never picked. Never a nearest time.
@@ -75,7 +76,10 @@ export function writerRunOf(
   const live = occurrences.filter((o) => !o.reversal);
   const sends = live.filter((o) => o.direction === "produced" && o.outcomeKey === SENT);
   let sendRun: string | null = null;
-  if (message.statedRunId && sends.some((o) => o.runId === message.statedRunId)) sendRun = message.statedRunId;
+  const consumedWriting = (run: string) => live.some((o) => o.runId === run && o.direction === "consumed" && o.outcomeKey === WRITTEN);
+  // The run the sender's record names: it declared the send, or it consumed what was sent (a script that asks a child
+  // run to deliver), either way a recorded fact tying it to this message.
+  if (message.statedRunId && (sends.some((o) => o.runId === message.statedRunId) || consumedWriting(message.statedRunId))) sendRun = message.statedRunId;
   else if (message.sentAt !== null) {
     const at = ms(message.sentAt);
     const runs = [...new Set(sends.filter((o) => ms(o.declaredAt) === at).map((o) => o.runId))];
