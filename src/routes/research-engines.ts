@@ -29,6 +29,7 @@ import { marksFor } from "../lib/catalogue-marks-store.js";
 import { withMark } from "../lib/catalogue-mark-serving.js";
 import type { CatalogTemplate } from "../lib/research/catalog.js";
 import type { LegWorkflowFigures } from "../lib/leg-workflow-figures.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 const router = Router();
 
@@ -61,7 +62,7 @@ router.get("/internal/research/engines", apiKeyOnly, async (req, res) => {
     res.json({ ...build.file, freshness: researchFreshnessOf(build, p.basis, p.view) });
   } catch (error) {
     console.error("[features-service] research by Engine (file) failed:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -74,7 +75,7 @@ router.get("/internal/research/engines/catalog", apiKeyOnly, async (req, res) =>
     res.json({ computedAt: build.computedAt, costBasis: build.costBasis, view: p.view, ...(await servedEngineCatalog(build, p.view)) });
   } catch (error) {
     console.error("[features-service] research by Engine (catalogue) failed:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -172,7 +173,7 @@ router.get("/internal/research/engines/performance", apiKeyOnly, async (req, res
     res.json({ computedAt: build.computedAt, freshness: researchFreshnessOf(build, p.basis, p.view), costBasis: build.costBasis, view: p.view, ...enginePerformanceOf(history, scripts, now) });
   } catch (error) {
     console.error("[features-service] research by Engine (performance) failed:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 

@@ -63481,7 +63481,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -64079,7 +64079,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -64513,7 +64513,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -64713,7 +64713,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -65305,7 +65305,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -65461,7 +65461,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -65637,7 +65637,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -65888,7 +65888,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -66113,7 +66113,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -69148,7 +69148,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -69487,7 +69487,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -69698,7 +69698,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -71417,7 +71417,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -71576,7 +71576,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -71761,7 +71761,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -71963,7 +71963,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -72179,7 +72179,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -72452,7 +72452,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -72681,7 +72681,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -73312,7 +73312,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -73726,7 +73726,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -74099,7 +74099,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -74545,7 +74545,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -75381,7 +75381,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }

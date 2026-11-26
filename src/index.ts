@@ -3,6 +3,7 @@ import "./instrument.js";
 import * as Sentry from "@sentry/node";
 import express from "express";
 import { startEngineHeldMonitor } from "./lib/engine-held-monitor.js";
+import { startRefresherCrashMonitor } from "./lib/refresher-crash-monitor.js";
 import cors from "cors";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { db } from "./db/index.js";
@@ -95,6 +96,7 @@ import {
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
 import { validateRequiredEnv } from "./lib/env.js";
+import { answerInternalError } from "./lib/internal-error.js";
 validateRequiredEnv();
 
 const app = express();
@@ -195,7 +197,7 @@ Sentry.setupExpressErrorHandler(app);
 // Fallback error handler
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("Unhandled error:", err);
-  res.status(500).json({ error: "Internal server error" });
+  answerInternalError(res, err);
 });
 
 /**
@@ -284,6 +286,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         console.log(`Features service running on port ${PORT}`);
         // Fork the view refresher after the port binds: its boot must never hold up the health check.
         startViewRefresher(process.argv[1]);
+        // A refresher crash is red on Monitoring (REFRESHER-DOWN-NAMED-1126, lib/refresher-crash-monitor.ts): serving process only.
+        if (viewCacheRole() === "server" && process.env.VIEW_REFRESHER_ENABLED !== "false") startRefresherCrashMonitor();
         // Precompute the sibling scopes of every brand a customer reads (lib/view-keeper.ts). Timers are
         // unref'd and the first round waits a minute, so nothing here sits between boot and the port.
         startViewKeeper();
