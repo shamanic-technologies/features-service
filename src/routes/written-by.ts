@@ -18,8 +18,10 @@ import { listVerdictsOfVersions, loadPlayCatalogue } from "../lib/plays-store.js
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { fetchWithRetry } from "../lib/fetch-retry.js";
 import { mapWithConcurrency } from "../lib/concurrency.js";
-import { fetchWorkflowDefinitions } from "../lib/workflow-definitions-client.js";
-import { buildMessageWrittenBy, buildWrittenBy, writingModelAliasOfDag, type SentMessage, type VersionVerdict } from "../lib/written-by.js";
+import { buildMessageWrittenBy, buildWrittenBy, type ResolvedMessageModel, type SentMessage, type VersionVerdict } from "../lib/written-by.js";
+import { modelsBilled, writerRunOf, type RunCostLine } from "../lib/message-writer-model.js";
+import { readPersonLedger, readRunTreeCostLines, __resetRunTreeCostLinesForTest } from "../lib/message-writer-model-io.js";
+import { readLlmCostNameModels } from "../lib/llm-cost-names-client.js";
 import { readLegWorkflowRanking } from "./public.js";
 
 const router = Router();
@@ -104,43 +106,52 @@ async function withRunVersions(orgId: string, messages: SentMessage[]): Promise<
   );
 }
 
-/** Per feature: workflow version slug -> the model alias its writing step names. Versions never change; held 15 min. */
-const HOLD_ALIASES_MS = 15 * 60_000;
-const aliasesHeld = new Map<string, { at: number; value: Promise<Map<string, string | null>> }>();
-function featureModelAliases(featureSlug: string): Promise<Map<string, string | null>> {
-  const held = aliasesHeld.get(featureSlug);
-  if (held && Date.now() - held.at < HOLD_ALIASES_MS) return held.value;
-  const value = fetchWorkflowDefinitions(featureSlug).then((defs) => new Map(defs.map((d) => [d.workflowSlug, writingModelAliasOfDag(d.dag)])));
-  aliasesHeld.set(featureSlug, { at: Date.now(), value });
-  value.catch(() => {
-    if (aliasesHeld.get(featureSlug)?.value === value) aliasesHeld.delete(featureSlug);
-  });
-  return value;
-}
-
 /** Test seam. */
 export function __resetWrittenByAliasesForTest(): void {
-  aliasesHeld.clear();
   runVersionHeld.clear();
+  __resetRunTreeCostLinesForTest();
 }
 
 /**
- * workflow version slug -> its writing step's model alias, for the versions asked. The feature of a version is read
- * off its dynasty's pipe assignment (never its name). A feature whose definitions cannot be read leaves its versions
- * absent (their model reads `model_not_recorded`), logged.
+ * MODEL-TAG-EVERY-AI-MESSAGE-1126: per message lead-service did not mark as a person's, what the ledger says wrote it
+ * (`lib/message-writer-model.ts`). Fail SOFT: an unreadable part is a named reason on the messages it touches.
  */
-async function dagModelAliases(versions: ReadonlyArray<{ workflowSlug: string; workflowDynastySlug: string }>): Promise<Map<string, string | null>> {
-  const out = new Map<string, string | null>();
-  if (versions.length === 0) return out;
-  const dynasties = new Set(versions.map((v) => v.workflowDynastySlug));
-  const features = new Set((await listLegAssignments()).filter((a) => dynasties.has(a.workflowDynastySlug)).map((a) => a.featureSlug));
-  const wanted = new Set(versions.map((v) => v.workflowSlug));
-  for (const feature of features) {
+async function resolveMessageModels(orgId: string, leadId: string, messages: readonly SentMessage[]): Promise<Map<string, ResolvedMessageModel>> {
+  const out = new Map<string, ResolvedMessageModel>();
+  const asked = messages.filter((m) => m.writtenBy.by !== "person");
+  if (asked.length === 0) return out;
+  const ledger = await readPersonLedger(orgId, leadId).catch((error) => {
+    console.error(`[features-service] written-by: ledger unreadable this time (lead ${leadId}):`, error);
+    return null;
+  });
+  const writers = new Map(asked.map((m) => [m.id, writerRunOf({ sentAt: m.sentAt, statedRunId: m.writtenBy.by === "workflow" ? (m.writtenBy.runId ?? null) : null }, ledger)]));
+  const runIds = [...new Set([...writers.values()].map((w) => w.runId).filter((r): r is string => !!r))];
+  const lines = new Map<string, RunCostLine[] | null>();
+  await mapWithConcurrency(runIds, 4, async (runId) => {
     try {
-      for (const [slug, alias] of await featureModelAliases(feature)) if (wanted.has(slug)) out.set(slug, alias);
+      lines.set(runId, await readRunTreeCostLines(orgId, runId));
     } catch (error) {
-      console.error(`[features-service] written-by: ${feature} workflow definitions unreadable this time:`, error);
+      console.error(`[features-service] written-by: writing run ${runId} unreadable this time:`, error);
+      lines.set(runId, null);
     }
+  });
+  const catalogue = runIds.length === 0
+    ? null
+    : await readLlmCostNameModels().catch((error) => {
+        console.error("[features-service] written-by: chat-service llm cost names unreadable this time:", error);
+        return null;
+      });
+  for (const m of asked) {
+    const w = writers.get(m.id)!;
+    let resolved: ResolvedMessageModel;
+    if (!w.runId) resolved = { modelIds: [], reason: w.reason, sentByOurRun: w.sentByOurRun };
+    else if (lines.get(w.runId) == null) resolved = { modelIds: [], reason: "writing_run_unreadable", sentByOurRun: w.sentByOurRun };
+    else if (!catalogue) resolved = { modelIds: [], reason: "llm_cost_names_unreadable", sentByOurRun: w.sentByOurRun };
+    else {
+      const ids = modelsBilled(lines.get(w.runId)!, catalogue);
+      resolved = { modelIds: ids, reason: ids.length === 0 ? "no_llm_billed" : null, sentByOurRun: w.sentByOurRun };
+    }
+    out.set(m.id, resolved);
   }
   return out;
 }
@@ -176,7 +187,7 @@ router.get("/orgs/leads/:leadId/written-by", apiKeyAuth, async (rawReq, res) => 
       ...new Set([...records.map((r) => r.workflowSlug), ...(messages ?? []).map((m) => (m.writtenBy.by === "workflow" ? m.writtenBy.workflowSlug : null))].filter((s): s is string => !!s)),
     ];
     const [models, verdicts, catalogue] = await Promise.all([
-      slugs.length === 0 && records.length === 0
+      slugs.length === 0 && records.length === 0 && !(messages ?? []).some((m) => m.writtenBy.by !== "person")
         ? Promise.resolve([] as ServedModel[])
         : readModelIds().catch((error) => {
             console.error("[features-service] written-by: chat-service model names unreadable this time:", error);
@@ -186,15 +197,17 @@ router.get("/orgs/leads/:leadId/written-by", apiKeyAuth, async (rawReq, res) => 
       loadPlayCatalogue(),
     ]);
     const versionVerdicts: VersionVerdict[] = verdicts.map((v) => ({ workflowSlug: v.workflowSlug, workflowDynastySlug: v.workflowDynastySlug, tacticId: v.tacticId, verdict: v.verdict }));
-    const versions = [...new Map(versionVerdicts.map((v) => [v.workflowSlug, { workflowSlug: v.workflowSlug, workflowDynastySlug: v.workflowDynastySlug }])).values()];
-    const [maturity, dagModelAliasOf] = await Promise.all([maturityByDynasty([...new Set(versionVerdicts.map((v) => v.workflowDynastySlug))]), dagModelAliases(versions)]);
+    const [maturity, resolved] = await Promise.all([
+      maturityByDynasty([...new Set(versionVerdicts.map((v) => v.workflowDynastySlug))]),
+      messages ? resolveMessageModels(req.orgId, leadId, messages) : Promise.resolve(new Map<string, ResolvedMessageModel>()),
+    ]);
     const shared = { verdicts: versionVerdicts, tactics: catalogue.tactics, models, maturityByDynasty: maturity };
     const entries = buildWrittenBy({ ...shared, records });
     res.json({
       leadId,
       campaignId,
       entries,
-      messages: messages ? buildMessageWrittenBy({ ...shared, messages, records, dagModelAliasOf }) : null,
+      messages: messages ? buildMessageWrittenBy({ ...shared, messages, resolved }) : null,
       messagesUnavailableReason: messages ? null : "sent_messages_unreadable",
     });
   } catch (error) {

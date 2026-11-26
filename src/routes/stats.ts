@@ -1490,7 +1490,7 @@ router.get("/features/:featureSlug/stats", apiKeyAuth, async (req, res) => {
     if (auth.runId) {
       traceEvent(auth.runId, { service: "features-service", event: "feature-stats-error", detail: error instanceof Error ? error.message : "Unknown error", level: "error" }, req.headers).catch(() => {});
     }
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -1588,13 +1588,14 @@ router.get("/stats", apiKeyAuth, async (req, res) => {
     res.json({ costBasis: "charged" as const, groupBy: groupByParam, systemStats: buildSystemStats(totals, activeCampaigns), groups });
   } catch (error) {
     console.error("[features-service] Global stats error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
 // ── GET /stats/ranked — Authenticated version ───────────────────────────────
 
 import { handleRanked, handleBest } from "./public.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
   try {
@@ -1603,7 +1604,7 @@ router.get("/stats/ranked", apiKeyAuth, async (req, res) => {
     await handleRanked(req.query.featureSlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
   } catch (error) {
     console.error("[features-service] Stats ranked error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -1612,7 +1613,7 @@ router.get("/stats/best", apiKeyAuth, async (req, res) => {
     await handleBest(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Stats best error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 

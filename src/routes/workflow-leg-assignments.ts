@@ -18,6 +18,7 @@ import {
   setLegAssignment,
   WorkflowOnAnotherLegError,
 } from "../lib/workflow-leg-assignments.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 /** 409 for a write that would put a workflow active on a second leg (owner 2026-10-19: one leg at a time). */
 function sendOnAnotherLeg(res: import("express").Response, err: WorkflowOnAnotherLegError): void {
@@ -40,7 +41,7 @@ router.get("/internal/workflow-leg-assignments", apiKeyOnly, async (req, res) =>
     res.json({ assignments: await listLegAssignments({ featureSlug, legKey }) });
   } catch (err) {
     console.error("[features-service] workflow-leg-assignments list failed:", err);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, err);
   }
 });
 
@@ -54,7 +55,7 @@ router.get("/internal/workflow-leg-assignments/history", apiKeyOnly, async (req,
     res.json({ changes: await listLegAssignmentChanges({ featureSlug, legKey: pipeLegKeyOf(featureSlug, legKey), workflowDynastySlug }) });
   } catch (err) {
     console.error("[features-service] workflow-leg-assignments history failed:", err);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, err);
   }
 });
 

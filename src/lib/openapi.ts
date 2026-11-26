@@ -2627,9 +2627,24 @@ const writtenByMessageSchema = z.object({
   channel: z.string().nullable().describe("`email`, the Unibox channel (whatsapp, linkedin, gmail...), null for a bare act."),
   campaignId: z.string().nullable(),
   sentAt: z.string().nullable(),
-  writtenBy: z.enum(["workflow", "person", "unknown"]).describe("`workflow` = one of our AI workflows wrote it; `person` = a person sent it; `unknown` = not on record (never guessed)."),
-  model: writtenByEntrySchema.shape.model.describe("The LLM that wrote it: the concrete model of the version's writer record on that campaign when one exists, else the model the version's writing step asks for. Null with modelUnavailableReason."),
-  modelUnavailableReason: messageReason(["model_names_unreadable", "model_not_served", "no_workflow_recorded", "model_not_recorded"]),
+  writtenBy: z
+    .enum(["workflow", "person", "unknown"])
+    .describe("`workflow` = our AI wrote it (lead-service names our run, or the ledger holds a send our run declared for it); `person` = a person sent it; `unknown` = not on record (never guessed)."),
+  model: writtenByEntrySchema.shape.model.describe(
+    "The LLM that ACTUALLY wrote it (MODEL-TAG-EVERY-AI-MESSAGE-1126): runs-service's ledger, from the send our run declared for this message (the run lead-service names, else the send declared at the message's own instant, to the millisecond) to the `message_written` Unit it consumed, to the LLM billed in the run that wrote it (the one billed last; a fallback model is the one named). Never the model a script, version or template asks for. Null with modelUnavailableReason.",
+  ),
+  modelUnavailableReason: messageReason([
+    "model_names_unreadable",
+    "model_not_served",
+    "ledger_unreadable",
+    "no_send_in_ledger",
+    "send_ambiguous_in_ledger",
+    "no_writing_in_ledger",
+    "several_writings_in_ledger",
+    "writing_run_unreadable",
+    "no_llm_billed",
+    "llm_cost_names_unreadable",
+  ]),
   tactics: writtenByEntrySchema.shape.tactics,
   tacticsUnavailableReason: messageReason(["no_workflow_recorded", "not_judged_yet"]),
   underTest: writtenByEntrySchema.shape.underTest,
@@ -8234,7 +8249,7 @@ const catalogueRunnableField = { runnable: z.boolean().describe("We run it today
 const catalogueErrors = {
   400: { description: "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)." },
   401: { description: "Missing or wrong service key." },
-  503: { description: "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`." },
+  503: { description: "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)." },
 };
 
 const catalogueLifecycleRungs = ["lead_found", "contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"] as const;
@@ -8415,7 +8430,7 @@ const catalogueOfferQuery = {
   target: z.string().describe("Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.").optional(),
 };
 const catalogueOfferEcho = z
-  .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate."), ownRatesUnavailableReason: z.enum(["measured_rates_still_computing"]).nullable().describe("Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read.") })
+  .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate."), ownRatesUnavailableReason: z.enum(["measured_rates_still_computing"]).nullable().describe("Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read.") })
   .describe("Present on a per-offer read only.")
   .optional();
 const catalogueStepRef = z.object({ id: z.string().describe("Step key."), name: z.string() });
@@ -9572,6 +9587,58 @@ registry.registerPath({
     200: { description: "The three series, totals and the reconciliation.", content: { "application/json": { schema: saasCashView } } },
     401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
     502: { description: "billing or the stated amounts store unreadable (`saas_cash_unavailable`).", content: { "application/json": { schema: errorResponse } } },
+  },
+});
+
+// ── GET /internal/stats/ai-message-models (MODEL-TAG-EVERY-AI-MESSAGE-1126) ──────────
+
+const aiMessageModelFigures = z.object({
+  sentNotWrittenByOurRuns: z.number().int().describe("message_sent Units our runs declared that UTC day whose sending run consumed no message_written Unit (a newsletter release written once by hand): not AI messages, never red."),
+  messages: z.number().int().describe("AI messages: message_sent Units our runs declared that UTC day (every channel) whose sending run consumed a message_written Unit."),
+  withModel: z.number().int().describe("Of them, the messages whose writing run billed an LLM: the model that actually wrote them is named."),
+  withoutModel: z.number().int().describe("messages - withModel."),
+  withoutByReason: z.record(z.string(), z.number().int()).describe("withoutModel by reason (`several_writings_in_ledger`, `writing_run_unreadable`, `no_llm_billed`, `llm_cost_names_unreadable`)."),
+  byModel: z.record(z.string(), z.number().int()).describe("withModel by chat-service model id (public names in `modelNames`)."),
+});
+const aiMessageModelsView = registry.register(
+  "AiMessageModelsResponse",
+  z.object({
+    rule: z.string().describe("The counting rule's version; every stored day is recomputed when it moves."),
+    ruleText: z.string().describe("The rule in one paragraph (fine print)."),
+    days: z
+      .array(
+        z.object({
+          day: z.string().describe("UTC day, newest first. A day not built yet is absent."),
+          computedAt: z.string(),
+          fleet: aiMessageModelFigures,
+          orgs: z.array(aiMessageModelFigures.extend({ orgId: z.string().describe("'' = a send whose run names no org.") })).describe("Orgs that sent at least one message that day."),
+        }),
+      )
+      .describe("Stored daily series (today and yesterday rebuilt hourly, past days once)."),
+    modelNames: z.record(z.string(), z.object({ name: z.string(), vendor: z.object({ id: z.string(), name: z.string() }) }).nullable()).describe("Model id -> chat-service public name + vendor; null when chat-service names none (or its list is unreadable)."),
+    health: z.object({
+      broken: z.boolean().describe("Red on Monitoring: an AI message sent today or yesterday has no model named, or the series stopped (> 3 h since its last build). Old days never turn it red."),
+      unnamedOnRecentSends: z.number().int(),
+      lastComputedAt: z.string().nullable(),
+      reason: z.enum(["series_not_rebuilt", "ai_messages_with_no_model_named"]).nullable(),
+    }),
+  }),
+);
+
+registry.registerPath({
+  method: "get",
+  path: "/internal/stats/ai-message-models",
+  summary: "Per day, the messages our AI sent with vs without the model that actually wrote them named, fleet + per org (internal, api-key)",
+  description:
+    "Owner 2026-11-26 (MODEL-TAG-EVERY-AI-MESSAGE-1126): every message our AI wrote shows the model that actually ran. Dashboard v2 Monitoring charts « AI messages with no model named » from this. " +
+    "Same rule as `/orgs/leads/{leadId}/written-by`: a message = a message_sent Unit our run declared; its model = the LLM billed in the run that wrote the message_written Unit it consumed. Built hourly off the request path, stored per day. " +
+    "api-key only; staff-gated at api-service (`/v1/features/audit/ai-message-models`).",
+  tags: ["Internal"],
+  request: { query: z.object({ days: z.string().describe("Days back, 1..90 (default 30).").optional() }) },
+  responses: {
+    200: { description: "The stored daily series.", content: { "application/json": { schema: aiMessageModelsView } } },
+    400: { description: "`days_unrecognised`.", content: { "application/json": { schema: errorResponse } } },
+    401: { description: "Invalid or missing API key", content: { "application/json": { schema: errorResponse } } },
   },
 });
 

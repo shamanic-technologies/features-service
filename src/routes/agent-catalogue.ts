@@ -128,6 +128,7 @@ import { pgErrorOf } from "../lib/pg-error.js";
 import { readRunnableScriptsForCatalogue, scriptWorksPipe, type RunnableScript } from "../lib/script-catalogue-client.js";
 import { excludedPipeCandidates, scriptsKeptByStrategy } from "../lib/script-strategy.js";
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
+import { answerInternalError, refresherDownIn } from "../lib/internal-error.js";
 
 /**
  * THE AGENT CATALOGUE (owner 2026-10-10, "chat first"; the model and every formula: `lib/agent-catalogue.ts`).
@@ -488,7 +489,7 @@ export async function offerContextFor(offerId: string, brandId: string, ids: { o
   };
 }
 
-const OVER_BUDGET = Symbol("over_budget");
+export const OVER_BUDGET = Symbol("over_budget");
 
 /** How long a per-offer read waits on the brand's measured rates before pricing on its stated ones (env, default 4 s). */
 function ownRatesBudgetMs(): number {
@@ -496,14 +497,23 @@ function ownRatesBudgetMs(): number {
   return Number.isFinite(n) && n >= 0 ? n : 4_000;
 }
 
-/** The promise's value if it settles within `ms`, else `OVER_BUDGET` (the promise keeps running; a late failure is logged). A failure inside the budget throws as before. */
-async function withinBudget<T>(p: Promise<T>, ms: number): Promise<T | typeof OVER_BUDGET> {
+/**
+ * The promise's value if it settles within `ms`, else `OVER_BUDGET` (the promise keeps running; a late failure is logged).
+ * A refresher restarting inside the budget reads as still computing too (REFRESHER-DOWN-NAMED-1126: the brand's measured
+ * rates are a view the refresher computes; when it was out of memory every per-offer read answered a bare 500 instead of
+ * pricing on the brand's stated rates). Any other failure inside the budget throws as before.
+ */
+export async function withinBudget<T>(p: Promise<T>, ms: number): Promise<T | typeof OVER_BUDGET> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<typeof OVER_BUDGET>((resolve) => {
     timer = setTimeout(() => resolve(OVER_BUDGET), ms);
   });
   try {
-    const out = await Promise.race([p, late]);
+    const out: T | typeof OVER_BUDGET = await Promise.race([p, late]).catch((err: unknown): typeof OVER_BUDGET => {
+      if (!refresherDownIn(err)) throw err;
+      console.error(`[features-service] agent catalogue: brand's measured rates wait on the restarting refresher; this read prices on stated rates: ${(err as Error).message}`);
+      return OVER_BUDGET;
+    });
     if (out === OVER_BUDGET) p.catch((err) => console.error(`[features-service] agent catalogue: brand's measured rates failed after the read answered on stated rates: ${(err as Error).message}`));
     return out;
   } finally {
@@ -827,7 +837,7 @@ function fail(res: Response, err: unknown, what: string): void {
   const pg = pgErrorOf(err);
   if (pg.code === "23505") return void res.status(409).json({ error: String(pg.message ?? (err as Error).message), reason: "already_exists" });
   console.error(`[features-service] agent catalogue: ${what} failed:`, err);
-  res.status(500).json({ error: "Internal server error" });
+  answerInternalError(res, err);
 }
 
 /** Name the given keys (assigning the unnamed ones), returning key -> name. */

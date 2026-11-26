@@ -3,6 +3,7 @@ import "./instrument.js";
 import * as Sentry from "@sentry/node";
 import express from "express";
 import { startEngineHeldMonitor } from "./lib/engine-held-monitor.js";
+import { startRefresherCrashMonitor } from "./lib/refresher-crash-monitor.js";
 import cors from "cors";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { db } from "./db/index.js";
@@ -59,6 +60,8 @@ import scriptEnginesRoutes, { startScriptEnginesLoop, warmScriptEngines } from "
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import saasCashRoutes from "./routes/saas-cash.js";
+import aiMessageModelsRoutes from "./routes/ai-message-models.js";
+import { startAiMessageModelsLoop } from "./lib/ai-message-models-io.js";
 import clientFinancialsRoutes from "./routes/client-financials.js";
 import boxHealthRoutes from "./routes/box-health.js";
 import boxChecksRoutes from "./routes/box-checks.js";
@@ -95,6 +98,7 @@ import {
 
 // ── Required env vars — crash at startup if missing ─────────────────────────
 import { validateRequiredEnv } from "./lib/env.js";
+import { answerInternalError } from "./lib/internal-error.js";
 validateRequiredEnv();
 
 const app = express();
@@ -182,6 +186,7 @@ app.use(carriedVerdictsRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 app.use(saasCashRoutes);
+app.use(aiMessageModelsRoutes);
 app.use(clientFinancialsRoutes);
 
 // 404 handler
@@ -195,7 +200,7 @@ Sentry.setupExpressErrorHandler(app);
 // Fallback error handler
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("Unhandled error:", err);
-  res.status(500).json({ error: "Internal server error" });
+  answerInternalError(res, err);
 });
 
 /**
@@ -284,6 +289,8 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         console.log(`Features service running on port ${PORT}`);
         // Fork the view refresher after the port binds: its boot must never hold up the health check.
         startViewRefresher(process.argv[1]);
+        // A refresher crash is red on Monitoring (REFRESHER-DOWN-NAMED-1126, lib/refresher-crash-monitor.ts): serving process only.
+        if (viewCacheRole() === "server" && process.env.VIEW_REFRESHER_ENABLED !== "false") startRefresherCrashMonitor();
         // Precompute the sibling scopes of every brand a customer reads (lib/view-keeper.ts). Timers are
         // unref'd and the first round waits a minute, so nothing here sits between boot and the port.
         startViewKeeper();
@@ -317,6 +324,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startOutcomeSilverLoop();
         // Monitoring's board of what the Rating picks per Engine, rebuilt every 15 minutes (SCRIPT-VALUE-RATING-1113-MON).
         startScriptEnginesLoop();
+        // MODEL-TAG-EVERY-AI-MESSAGE-1126: the daily series of AI messages with / without their model named, four minutes
+        // in, then hourly (today, yesterday, and a few missing days of the last 30).
+        startAiMessageModelsLoop();
         // Every priced read (lead families' cache key included) reads the fleet medians first.
         warmFleetStatedMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.

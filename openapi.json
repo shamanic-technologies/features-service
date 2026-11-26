@@ -16715,7 +16715,7 @@
                     "person",
                     "unknown"
                   ],
-                  "description": "`workflow` = one of our AI workflows wrote it; `person` = a person sent it; `unknown` = not on record (never guessed)."
+                  "description": "`workflow` = our AI wrote it (lead-service names our run, or the ledger holds a send our run declared for it); `person` = a person sent it; `unknown` = not on record (never guessed)."
                 },
                 "model": {
                   "type": "object",
@@ -16747,7 +16747,7 @@
                     "name",
                     "vendor"
                   ],
-                  "description": "The LLM that wrote it: the concrete model of the version's writer record on that campaign when one exists, else the model the version's writing step asks for. Null with modelUnavailableReason."
+                  "description": "The LLM that ACTUALLY wrote it (MODEL-TAG-EVERY-AI-MESSAGE-1126): runs-service's ledger, from the send our run declared for this message (the run lead-service names, else the send declared at the message's own instant, to the millisecond) to the `message_written` Unit it consumed, to the LLM billed in the run that wrote it (the one billed last; a fallback model is the one named). Never the model a script, version or template asks for. Null with modelUnavailableReason."
                 },
                 "modelUnavailableReason": {
                   "type": "string",
@@ -16755,8 +16755,14 @@
                   "enum": [
                     "model_names_unreadable",
                     "model_not_served",
-                    "no_workflow_recorded",
-                    "model_not_recorded",
+                    "ledger_unreadable",
+                    "no_send_in_ledger",
+                    "send_ambiguous_in_ledger",
+                    "no_writing_in_ledger",
+                    "several_writings_in_ledger",
+                    "writing_run_unreadable",
+                    "no_llm_billed",
+                    "llm_cost_names_unreadable",
                     "written_by_a_person",
                     "writer_unknown",
                     null
@@ -37073,6 +37079,206 @@
           "excludedOrgs",
           "saasOrgsWithoutVerdict",
           "payingSaasOrgs"
+        ]
+      },
+      "AiMessageModelsResponse": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "string",
+            "description": "The counting rule's version; every stored day is recomputed when it moves."
+          },
+          "ruleText": {
+            "type": "string",
+            "description": "The rule in one paragraph (fine print)."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": {
+                  "type": "string",
+                  "description": "UTC day, newest first. A day not built yet is absent."
+                },
+                "computedAt": {
+                  "type": "string"
+                },
+                "fleet": {
+                  "type": "object",
+                  "properties": {
+                    "sentNotWrittenByOurRuns": {
+                      "type": "integer",
+                      "description": "message_sent Units our runs declared that UTC day whose sending run consumed no message_written Unit (a newsletter release written once by hand): not AI messages, never red."
+                    },
+                    "messages": {
+                      "type": "integer",
+                      "description": "AI messages: message_sent Units our runs declared that UTC day (every channel) whose sending run consumed a message_written Unit."
+                    },
+                    "withModel": {
+                      "type": "integer",
+                      "description": "Of them, the messages whose writing run billed an LLM: the model that actually wrote them is named."
+                    },
+                    "withoutModel": {
+                      "type": "integer",
+                      "description": "messages - withModel."
+                    },
+                    "withoutByReason": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer"
+                      },
+                      "description": "withoutModel by reason (`several_writings_in_ledger`, `writing_run_unreadable`, `no_llm_billed`, `llm_cost_names_unreadable`)."
+                    },
+                    "byModel": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "integer"
+                      },
+                      "description": "withModel by chat-service model id (public names in `modelNames`)."
+                    }
+                  },
+                  "required": [
+                    "sentNotWrittenByOurRuns",
+                    "messages",
+                    "withModel",
+                    "withoutModel",
+                    "withoutByReason",
+                    "byModel"
+                  ]
+                },
+                "orgs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "sentNotWrittenByOurRuns": {
+                        "type": "integer",
+                        "description": "message_sent Units our runs declared that UTC day whose sending run consumed no message_written Unit (a newsletter release written once by hand): not AI messages, never red."
+                      },
+                      "messages": {
+                        "type": "integer",
+                        "description": "AI messages: message_sent Units our runs declared that UTC day (every channel) whose sending run consumed a message_written Unit."
+                      },
+                      "withModel": {
+                        "type": "integer",
+                        "description": "Of them, the messages whose writing run billed an LLM: the model that actually wrote them is named."
+                      },
+                      "withoutModel": {
+                        "type": "integer",
+                        "description": "messages - withModel."
+                      },
+                      "withoutByReason": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "integer"
+                        },
+                        "description": "withoutModel by reason (`several_writings_in_ledger`, `writing_run_unreadable`, `no_llm_billed`, `llm_cost_names_unreadable`)."
+                      },
+                      "byModel": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "integer"
+                        },
+                        "description": "withModel by chat-service model id (public names in `modelNames`)."
+                      },
+                      "orgId": {
+                        "type": "string",
+                        "description": "'' = a send whose run names no org."
+                      }
+                    },
+                    "required": [
+                      "sentNotWrittenByOurRuns",
+                      "messages",
+                      "withModel",
+                      "withoutModel",
+                      "withoutByReason",
+                      "byModel",
+                      "orgId"
+                    ]
+                  },
+                  "description": "Orgs that sent at least one message that day."
+                }
+              },
+              "required": [
+                "day",
+                "computedAt",
+                "fleet",
+                "orgs"
+              ]
+            },
+            "description": "Stored daily series (today and yesterday rebuilt hourly, past days once)."
+          },
+          "modelNames": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "nullable": true,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "vendor": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "vendor"
+              ]
+            },
+            "description": "Model id -> chat-service public name + vendor; null when chat-service names none (or its list is unreadable)."
+          },
+          "health": {
+            "type": "object",
+            "properties": {
+              "broken": {
+                "type": "boolean",
+                "description": "Red on Monitoring: an AI message sent today or yesterday has no model named, or the series stopped (> 3 h since its last build). Old days never turn it red."
+              },
+              "unnamedOnRecentSends": {
+                "type": "integer"
+              },
+              "lastComputedAt": {
+                "type": "string",
+                "nullable": true
+              },
+              "reason": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "series_not_rebuilt",
+                  "ai_messages_with_no_model_named",
+                  null
+                ]
+              }
+            },
+            "required": [
+              "broken",
+              "unnamedOnRecentSends",
+              "lastComputedAt",
+              "reason"
+            ]
+          }
+        },
+        "required": [
+          "rule",
+          "ruleText",
+          "days",
+          "modelNames",
+          "health"
         ]
       },
       "ClientFinancialRow": {
@@ -63481,7 +63687,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -64079,7 +64285,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -64513,7 +64719,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -64713,7 +64919,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -65305,7 +65511,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -65461,7 +65667,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -65637,7 +65843,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -65888,7 +66094,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -66113,7 +66319,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -69148,7 +69354,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -69487,7 +69693,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -69698,7 +69904,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -71417,7 +71623,7 @@
                             "measured_rates_still_computing",
                             null
                           ],
-                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
+                          "description": "Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read."
                         }
                       },
                       "required": [
@@ -71576,7 +71782,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -71761,7 +71967,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -71963,7 +72169,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -72179,7 +72385,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -72452,7 +72658,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -72681,7 +72887,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -73312,7 +73518,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -73726,7 +73932,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -74099,7 +74305,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -74545,7 +74751,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       },
@@ -75381,7 +75587,7 @@
             "description": "Unknown id (`*_not_found`)."
           },
           "503": {
-            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`."
+            "description": "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)."
           }
         }
       }
@@ -78314,6 +78520,75 @@
           },
           "502": {
             "description": "billing or the stated amounts store unreadable (`saas_cash_unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/stats/ai-message-models": {
+      "get": {
+        "summary": "Per day, the messages our AI sent with vs without the model that actually wrote them named, fleet + per org (internal, api-key)",
+        "description": "Owner 2026-11-26 (MODEL-TAG-EVERY-AI-MESSAGE-1126): every message our AI wrote shows the model that actually ran. Dashboard v2 Monitoring charts « AI messages with no model named » from this. Same rule as `/orgs/leads/{leadId}/written-by`: a message = a message_sent Unit our run declared; its model = the LLM billed in the run that wrote the message_written Unit it consumed. Built hourly off the request path, stored per day. api-key only; staff-gated at api-service (`/v1/features/audit/ai-message-models`).",
+        "tags": [
+          "Internal"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Days back, 1..90 (default 30)."
+            },
+            "required": false,
+            "description": "Days back, 1..90 (default 30).",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored daily series.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiMessageModelsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`days_unrecognised`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing API key",
             "content": {
               "application/json": {
                 "schema": {

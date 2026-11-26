@@ -603,6 +603,13 @@
       "when": 1796400000000,
       "tag": "0085_campaign_brief_most_units",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1796486400000,
+      "tag": "0086_ai_message_model_days",
+      "breakpoints": true
     }
   ]
 }

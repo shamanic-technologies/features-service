@@ -46,6 +46,7 @@ import { isOutboundChannel } from "../lib/channel-types.js";
 import { storedCombinationKeyOf, storedLegKeyOf } from "../lib/funnel-legs.js";
 import { invalidateChannelCatalogue } from "./public.js";
 import { pgErrorOf } from "../lib/pg-error.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 /**
  * RUN-TIME DECLARATIONS (`lib/channel-declarations.ts`, owner 2026-10-09): channels, legs on a channel,
@@ -152,7 +153,7 @@ function fail(res: Response, err: unknown, what: string): void {
     return;
   }
   console.error(`[features-service] declarations: ${what} failed:`, err);
-  res.status(500).json({ error: "Internal server error" });
+  answerInternalError(res, err);
 }
 
 // ── Channels ────────────────────────────────────────────────────────────────────────────────────────
