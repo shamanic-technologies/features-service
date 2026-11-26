@@ -1391,3 +1391,24 @@ export const outcomeSilverStats = pgTable(
   },
   (table) => [primaryKey({ name: "outcome_silver_stats_pk", columns: [table.scope, table.scopeId, table.fromKey, table.toKey] })],
 );
+
+/**
+ * MODEL-TAG-EVERY-AI-MESSAGE-1126 (migration 0086): per UTC day and org, the messages our runs sent and how many name the
+ * model that actually wrote them (`lib/ai-message-models.ts`). `org_id` '' = a send whose run names no org.
+ */
+export const aiMessageModelDays = pgTable(
+  "ai_message_model_days",
+  {
+    day: date("day").notNull(),
+    orgId: text("org_id").notNull(),
+    sentNotWrittenByOurRuns: integer("sent_not_written_by_our_runs").notNull(),
+    messages: integer("messages").notNull(),
+    withModel: integer("with_model").notNull(),
+    withoutModel: integer("without_model").notNull(),
+    withoutByReason: jsonb("without_by_reason").notNull(),
+    byModel: jsonb("by_model").notNull(),
+    rule: text("rule").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "ai_message_model_days_pk", columns: [table.day, table.orgId] })],
+);
