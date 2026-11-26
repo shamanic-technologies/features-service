@@ -41,10 +41,8 @@ vi.mock("./public.js", async (orig) => ({
   readLegWorkflowRanking: vi.fn(async () => ({ rows: [{ workflowDynastySlug: "sales-cold-email-outreach-ainalrami", isMature: false }] })),
 }));
 
-vi.mock("../lib/workflow-definitions-client.js", () => ({
-  fetchWorkflowDefinitions: vi.fn(async () => [
-    { workflowSlug: "sales-cold-email-outreach-ainalrami-v2", workflowDynastySlug: "sales-cold-email-outreach-ainalrami", version: 2, versionActive: true, description: null, dag: { nodes: [{ config: { service: "content-generation", path: "/generate", body: { type: "blind-discovery-email-v15", model: "opus" } } }] } },
-  ]),
+vi.mock("../lib/llm-cost-names-client.js", () => ({
+  readLlmCostNameModels: vi.fn(async () => new Map([["anthropic-opus-5.5-tokens-output", ["claude-opus-5-5"]]])),
 }));
 
 process.env.FEATURES_SERVICE_API_KEY = "test-key";
@@ -63,7 +61,11 @@ describe("GET /orgs/leads/:leadId/written-by (WRITTEN-BY-1019)", () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
     fetchMock.mockReset().mockImplementation(async (url: string) =>
-      url.includes("/sent-messages")
+      url.includes("/internal/outcome-occurrences")
+        ? new Response(JSON.stringify({ occurrences: [], nextCursor: null }), { status: 200 })
+        : url.endsWith("/v1/runs/r1")
+        ? new Response(JSON.stringify({ organizationId: AUTH["x-org-id"], status: "completed", costs: [], descendantRuns: [{ status: "completed", costs: [{ costName: "anthropic-opus-5.5-tokens-output", status: "actual", createdAt: "2026-10-19T05:38:40.000Z" }] }] }), { status: 200 })
+        : url.includes("/sent-messages")
         ? new Response(
             JSON.stringify({
               leadId: LEAD,
@@ -141,14 +143,45 @@ describe("GET /orgs/leads/:leadId/written-by (WRITTEN-BY-1019)", () => {
     const act = (id: string, runId: string) => ({ id, kind: "followup_act", source: "followup_ledger", channel: null, campaignId: null, brandIds: [], sentAt: "2026-10-16T08:20:40.229Z", writtenBy: { by: "workflow", basis: "recorded_act", runId, workflowSlug: null, campaignId: "a27bb0e7-b955-4586-a5bd-4a02cb54a29d", workflowSource: null, reason: null } });
     fetchMock.mockImplementation(async (url: string) => {
       if (url.includes("/sent-messages")) return new Response(JSON.stringify({ leadId: LEAD, count: 2, messages: [act("fa-1", "run-own"), act("fa-2", "run-foreign")] }), { status: 200 });
-      if (url.endsWith("/v1/runs/run-own")) return new Response(JSON.stringify({ organizationId: AUTH["x-org-id"], workflowSlug: "sales-cold-email-outreach-ainalrami-v2" }), { status: 200 });
+      if (url.includes("/internal/outcome-occurrences")) return new Response(JSON.stringify({ occurrences: [], nextCursor: null }), { status: 200 });
+      if (url.endsWith("/v1/runs/run-own")) return new Response(JSON.stringify({ organizationId: AUTH["x-org-id"], status: "completed", workflowSlug: "sales-cold-email-outreach-ainalrami-v2", costs: [{ costName: "anthropic-opus-5.5-tokens-output", status: "actual", createdAt: "2026-10-16T08:20:00.000Z" }], descendantRuns: [] }), { status: 200 });
       if (url.endsWith("/v1/runs/run-foreign")) return new Response(JSON.stringify({ organizationId: "another-org", workflowSlug: "sales-cold-email-outreach-ainalrami-v2" }), { status: 200 });
       return new Response("{}", { status: 404 });
     });
     const res = await request(app).get(`/orgs/leads/${LEAD}/written-by`).set(AUTH);
     const [own, foreign] = res.body.messages;
     expect(own).toMatchObject({ id: "fa-1", writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }], underTest: true });
-    expect(foreign).toMatchObject({ id: "fa-2", writtenBy: "workflow", model: null, modelUnavailableReason: "no_workflow_recorded" });
+    expect(foreign).toMatchObject({ id: "fa-2", writtenBy: "workflow", model: null, modelUnavailableReason: "writing_run_unreadable" });
+  });
+
+  it("a script-era email lead-service cannot place is our AI's, named by the model the ledger billed (MODEL-TAG-EVERY-AI-MESSAGE-1126)", async () => {
+    const SENT_AT = "2026-11-24T06:09:34.819Z";
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes("/sent-messages"))
+        return new Response(JSON.stringify({ leadId: LEAD, count: 1, messages: [{ id: "ievt:1", kind: "email_sent", source: "outreach", channel: "email", campaignId: "a75bc489-2622-42b3-a07a-b3908589646e", brandIds: [], sentAt: SENT_AT, writtenBy: { by: "unknown", basis: null, runId: null, workflowSlug: null, campaignId: null, workflowSource: null, reason: "no_recorded_run" } }] }), { status: 200 });
+      if (url.includes("/internal/outcome-occurrences"))
+        return new Response(
+          JSON.stringify({
+            occurrences: [
+              { id: "o1", runId: "send-run", organizationId: AUTH["x-org-id"], direction: "produced", outcomeKey: "message_sent", declaredAt: SENT_AT, consumption: null, reversal: null },
+              { id: "o2", runId: "send-run", organizationId: AUTH["x-org-id"], direction: "consumed", outcomeKey: "message_written", declaredAt: SENT_AT, consumption: { sourceRunId: "writer-run", provenance: "known" }, reversal: null },
+              { id: "o3", runId: "foreign-send", organizationId: "another-org", direction: "produced", outcomeKey: "message_sent", declaredAt: SENT_AT, consumption: null, reversal: null },
+            ],
+            nextCursor: null,
+          }),
+          { status: 200 },
+        );
+      if (url.endsWith("/v1/runs/writer-run"))
+        return new Response(JSON.stringify({ organizationId: AUTH["x-org-id"], status: "completed", costs: [], descendantRuns: [{ status: "completed", costs: [{ costName: "anthropic-opus-5.5-tokens-output", status: "actual", createdAt: "2026-11-24T02:38:33.423Z" }] }] }), { status: 200 });
+      return new Response("{}", { status: 404 });
+    });
+    state.records = [];
+    const res = await request(app).get(`/orgs/leads/${LEAD}/written-by`).set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body.messages).toEqual([
+      expect.objectContaining({ id: "ievt:1", writtenBy: "workflow", model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } }, modelUnavailableReason: null }),
+    ]);
+    expect(JSON.stringify(res.body)).not.toMatch(/writer-run|send-run|runId|cost/i);
   });
 
   it("lead-service unreadable: the writer records still answer, messages null with a reason", async () => {

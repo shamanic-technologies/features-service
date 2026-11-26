@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMessageWrittenBy, buildWrittenBy, underTestOf, vendorOf, writingModelAliasOfDag, type VersionVerdict, type WriterRecord } from "./written-by.js";
+import { buildMessageWrittenBy, buildWrittenBy, underTestOf, vendorOf, type VersionVerdict, type WriterRecord } from "./written-by.js";
 
 const MODELS = [
   { modelId: "claude-opus-5-5", displayName: "Claude Opus 5.5", provider: "anthropic", capabilityTier: "frontier", aliases: ["opus"], formerAliases: [] },
@@ -98,37 +98,47 @@ describe("buildMessageWrittenBy: every message, any channel (WRITTEN-BY-1019-SEN
     ...extra,
   });
 
-  it("a sequence email reads its writer record's concrete model; a self-drafted WhatsApp follow-up reads the model its DAG asks for", () => {
+  const resolved = (entries: Array<[string, { modelIds: string[][]; reason?: string | null; sentByOurRun?: boolean }]>) =>
+    new Map(entries.map(([id, r]) => [id, { modelIds: r.modelIds, reason: (r.reason ?? null) as never, sentByOurRun: r.sentByOurRun ?? true }]));
+
+  it("names the model the ledger billed for the writing, any channel, never the one the version asks for", () => {
     const [email, whatsapp] = buildMessageWrittenBy({
       ...base,
       maturityByDynasty: maturity,
-      records: [BLIND],
       messages: [msg("subj-1", "workflow", BLIND.workflowSlug), msg("crm-9", "workflow", "ai-follow-up-email-algenib-v16", { channel: "whatsapp", campaignId: null })],
-      dagModelAliasOf: new Map([["ai-follow-up-email-algenib-v16", "opus"]]),
+      resolved: resolved([
+        ["subj-1", { modelIds: [["claude-sonnet-5-5"]] }],
+        ["crm-9", { modelIds: [["claude-opus-5-5"], ["claude-sonnet-5-5"]] }],
+      ]),
     });
-    expect(email).toMatchObject({ id: "subj-1", writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, underTest: true, tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }, { name: "Fresh contacts only", line: "Skips anyone you emailed in the last 3 months" }] });
-    expect(whatsapp).toMatchObject({ id: "crm-9", channel: "whatsapp", writtenBy: "workflow", model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } }, modelUnavailableReason: null, underTest: false, tactics: [{ name: "Fresh contacts only", line: "Skips anyone you emailed in the last 3 months" }] });
+    expect(email).toMatchObject({ id: "subj-1", writtenBy: "workflow", model: { name: "Claude Sonnet 5.5" }, underTest: true, tactics: [{ name: "Blind angle", line: "Brand not named in the first email" }, { name: "Fresh contacts only", line: "Skips anyone you emailed in the last 3 months" }] });
+    expect(whatsapp).toMatchObject({ id: "crm-9", channel: "whatsapp", writtenBy: "workflow", model: { name: "Claude Opus 5.5", vendor: { id: "anthropic", name: "Anthropic" } }, modelUnavailableReason: null, underTest: false });
   });
 
-  it("a message a person sent, or whose writer is not on record, says so and names no model", () => {
-    const [person, unknown, noSlug] = buildMessageWrittenBy({ ...base, maturityByDynasty: maturity, records: [], messages: [msg("a", "person", null), msg("b", "unknown", null), msg("c", "workflow", null)], dagModelAliasOf: new Map() });
+  it("a message lead-service cannot place but whose send our run declared is our AI's (script era: no version)", () => {
+    const [m] = buildMessageWrittenBy({ ...base, maturityByDynasty: maturity, messages: [msg("s", "unknown", null)], resolved: resolved([["s", { modelIds: [["claude-opus-5-5"]] }]]) });
+    expect(m).toMatchObject({ writtenBy: "workflow", model: { name: "Claude Opus 5.5" }, modelUnavailableReason: null, tactics: [], tacticsUnavailableReason: "no_workflow_recorded" });
+  });
+
+  it("a message a person sent, or whose writer is not on record, says so and names no model; a missing fact is a named reason", () => {
+    const [person, unknown, noSend, noLlm] = buildMessageWrittenBy({
+      ...base,
+      maturityByDynasty: maturity,
+      messages: [msg("a", "person", null), msg("b", "unknown", null), msg("c", "workflow", null), msg("d", "workflow", null)],
+      resolved: resolved([
+        ["b", { modelIds: [], reason: "no_send_in_ledger", sentByOurRun: false }],
+        ["c", { modelIds: [], reason: "no_send_in_ledger", sentByOurRun: false }],
+        ["d", { modelIds: [], reason: "no_llm_billed" }],
+      ]),
+    });
     expect(person).toMatchObject({ writtenBy: "person", model: null, modelUnavailableReason: "written_by_a_person", tactics: [], underTest: null });
     expect(unknown).toMatchObject({ writtenBy: "unknown", modelUnavailableReason: "writer_unknown", tacticsUnavailableReason: "writer_unknown" });
-    expect(noSlug).toMatchObject({ writtenBy: "workflow", modelUnavailableReason: "no_workflow_recorded", tacticsUnavailableReason: "no_workflow_recorded" });
+    expect(noSend).toMatchObject({ writtenBy: "workflow", model: null, modelUnavailableReason: "no_send_in_ledger", tacticsUnavailableReason: "no_workflow_recorded" });
+    expect(noLlm).toMatchObject({ model: null, modelUnavailableReason: "no_llm_billed" });
   });
 
-  it("a writer record written AFTER the send is not the one that wrote it", () => {
-    const [m] = buildMessageWrittenBy({ ...base, maturityByDynasty: maturity, records: [BLIND], messages: [msg("x", "workflow", BLIND.workflowSlug, { sentAt: "2026-10-18T00:00:00.000Z" })], dagModelAliasOf: new Map() });
-    expect(m).toMatchObject({ model: null, modelUnavailableReason: "model_not_recorded" });
-  });
-
-  it("reads the model a version writes with off its DAG: the generate step first, else the /complete step", () => {
-    const gen = { service: "content-generation", path: "/generate", body: { type: "blind-discovery-email-v15", model: "opus" } };
-    const judge = { service: "chat", path: "/orgs/judgments", body: { model: "haiku" } };
-    const draft = { service: "chat", path: "/complete", body: { model: "sonnet" } };
-    expect(writingModelAliasOfDag({ nodes: [{ config: judge }, { config: draft }, { config: gen }] })).toBe("opus");
-    expect(writingModelAliasOfDag({ nodes: [{ config: judge }, { config: draft }] })).toBe("sonnet");
-    expect(writingModelAliasOfDag({ nodes: [{ config: judge }] })).toBeNull();
-    expect(writingModelAliasOfDag(null)).toBeNull();
+  it("a model chat-service does not name reads model_not_served, never a guessed name", () => {
+    const [m] = buildMessageWrittenBy({ ...base, maturityByDynasty: maturity, messages: [msg("z", "workflow", null)], resolved: resolved([["z", { modelIds: [["glm-9"]] }]]) });
+    expect(m).toMatchObject({ model: null, modelUnavailableReason: "model_not_served" });
   });
 });

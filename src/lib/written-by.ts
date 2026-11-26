@@ -17,7 +17,7 @@
  */
 import type { ServedModel } from "./model-ids-client.js";
 import type { Tactic } from "./plays.js";
-import { resolveModelAlias } from "./research/writers.js";
+import type { ModelResolutionReason } from "./message-writer-model.js";
 
 /** chat-service's vendor ids in the words a client reads (the dashboard keys the logo on `id`). */
 const VENDOR_NAMES: Record<string, string> = {
@@ -131,25 +131,6 @@ export function buildWrittenBy(input: WrittenByInput & { records: readonly Write
   return records.map((r) => ({ campaignId: r.campaignId, writtenAt: r.createdAt.toISOString(), ...modelBlockOf(r.model, input.models), ...versionOf(r.workflowSlug) }));
 }
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-
-/**
- * PURE. The model alias a workflow version WRITES with: its content-generation `/generate` step's body `model`, else its
- * chat-service `/complete` step's (a workflow drafting its own message). Null when no writing step names a model.
- */
-export function writingModelAliasOfDag(dag: unknown): string | null {
-  const nodes = isRecord(dag) && Array.isArray(dag.nodes) ? dag.nodes : [];
-  const bodies = (service: string, path: string | null) =>
-    nodes
-      .map((n) => (isRecord(n) && isRecord(n.config) ? n.config : null))
-      .filter((c): c is Record<string, unknown> => !!c && c.service === service && (path === null || c.path === path) && isRecord(c.body))
-      .map((c) => c.body as Record<string, unknown>);
-  for (const body of [...bodies("content-generation", null).filter((b) => typeof b.type === "string"), ...bodies("chat", "/complete")]) {
-    if (typeof body.model === "string" && body.model) return body.model;
-  }
-  return null;
-}
-
 /** One message we sent the person, as lead-service states it (`SentMessage`). */
 export interface SentMessage {
   id: string;
@@ -162,6 +143,17 @@ export interface SentMessage {
 
 export type MessageWriter = "workflow" | "person" | "unknown";
 
+/**
+ * What the ledger says wrote one message (MODEL-TAG-EVERY-AI-MESSAGE-1126, `lib/message-writer-model.ts`): the
+ * concrete model id(s) billed in its writing run, the one billed last first (empty = none), or why not, and whether
+ * a run of ours declared its send.
+ */
+export interface ResolvedMessageModel {
+  modelIds: string[][];
+  reason: ModelResolutionReason | null;
+  sentByOurRun: boolean;
+}
+
 export interface MessageWrittenBy {
   /** lead-service's message id: the timeline fact id (outreach subject key) or the Unibox (crm) fact id. */
   id: string;
@@ -169,51 +161,50 @@ export interface MessageWrittenBy {
   channel: string | null;
   campaignId: string | null;
   sentAt: string | null;
-  /** `workflow` = one of our AI workflows wrote it; `person` = a person sent it; `unknown` = not on record. */
+  /** `workflow` = our AI wrote it; `person` = a person sent it; `unknown` = not on record. */
   writtenBy: MessageWriter;
   model: WrittenByEntry["model"];
-  modelUnavailableReason: ModelUnavailableReason | "written_by_a_person" | "writer_unknown" | "no_workflow_recorded" | "model_not_recorded" | null;
+  modelUnavailableReason: ModelResolutionReason | "written_by_a_person" | "writer_unknown" | null;
   tactics: WrittenByEntry["tactics"];
   tacticsUnavailableReason: TacticsUnavailableReason | "written_by_a_person" | "writer_unknown" | null;
   underTest: boolean | null;
   underTestUnavailableReason: UnderTestUnavailableReason | "written_by_a_person" | "writer_unknown" | null;
 }
 
+/** PURE: the first model id of the latest-billed group chat-service serves a public name for. */
+function servedModelBlock(groups: readonly string[][], models: readonly ServedModel[] | null): ModelBlock {
+  if (!models) return modelBlockOf(null, null);
+  const latest = groups[0] ?? [];
+  const id = latest.find((m) => models.some((s) => s.modelId === m)) ?? latest[0] ?? null;
+  return modelBlockOf(id, models);
+}
+
 /**
- * PURE. One row per message we sent the person, in lead-service's order. Model: the version's writer record on the
- * message's campaign (the latest written at or before the send) when one exists, else the model its DAG writes with.
+ * PURE. One row per message we sent the person, in lead-service's order. The model is the one that ACTUALLY wrote it,
+ * read off the ledger (`resolved`, MODEL-TAG-EVERY-AI-MESSAGE-1126), never the model a script, version or template
+ * asks for. A message lead-service cannot place but whose send a run of ours declared is written by our AI.
  */
 export function buildMessageWrittenBy(
   input: WrittenByInput & {
     messages: readonly SentMessage[];
-    records: readonly WriterRecord[];
-    /** workflow version slug -> the model alias its writing step names (null = names none); absent = DAG not read. */
-    dagModelAliasOf: ReadonlyMap<string, string | null>;
+    /** message id -> what the ledger says wrote it; absent = not resolved (a person's message). */
+    resolved: ReadonlyMap<string, ResolvedMessageModel>;
   },
 ): MessageWrittenBy[] {
   const versionOf = versionBlocks(input);
   return input.messages.map((m) => {
-    const head = { id: m.id, kind: m.kind, channel: m.channel, campaignId: m.campaignId, sentAt: m.sentAt, writtenBy: m.writtenBy.by };
-    if (m.writtenBy.by !== "workflow") {
-      const reason = m.writtenBy.by === "person" ? ("written_by_a_person" as const) : ("writer_unknown" as const);
+    const resolved = input.resolved.get(m.id) ?? null;
+    const writer: MessageWriter = m.writtenBy.by === "person" ? "person" : m.writtenBy.by === "workflow" || resolved?.sentByOurRun ? "workflow" : "unknown";
+    const head = { id: m.id, kind: m.kind, channel: m.channel, campaignId: m.campaignId, sentAt: m.sentAt, writtenBy: writer };
+    if (writer !== "workflow") {
+      const reason = writer === "person" ? ("written_by_a_person" as const) : ("writer_unknown" as const);
       return { ...head, model: null, modelUnavailableReason: reason, tactics: [], tacticsUnavailableReason: reason, underTest: null, underTestUnavailableReason: reason };
     }
-    const slug = m.writtenBy.workflowSlug;
-    const campaign = m.campaignId ?? m.writtenBy.campaignId;
-    const sentAt = m.sentAt ? Date.parse(m.sentAt) : null;
-    const record = slug
-      ? input.records
-          .filter((r) => r.workflowSlug === slug && r.campaignId === campaign && (sentAt === null || r.createdAt.getTime() <= sentAt))
-          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
-      : undefined;
     let modelBlock: Pick<MessageWrittenBy, "model" | "modelUnavailableReason">;
-    if (!slug) modelBlock = { model: null, modelUnavailableReason: "no_workflow_recorded" };
-    else if (record) modelBlock = modelBlockOf(record.model, input.models);
-    else {
-      const alias = input.dagModelAliasOf.get(slug) ?? null;
-      const resolved = alias && input.models ? resolveModelAlias(alias, input.models) : null;
-      modelBlock = resolved ? modelBlockOf(resolved.id, input.models) : alias && !input.models ? modelBlockOf(null, null) : { model: null, modelUnavailableReason: "model_not_recorded" };
-    }
+    if (!resolved) modelBlock = { model: null, modelUnavailableReason: "no_send_in_ledger" };
+    else if (resolved.modelIds.length > 0) modelBlock = servedModelBlock(resolved.modelIds, input.models);
+    else modelBlock = { model: null, modelUnavailableReason: resolved.reason ?? "no_llm_billed" };
+    const slug = m.writtenBy.by === "workflow" ? m.writtenBy.workflowSlug : null;
     return { ...head, ...modelBlock, ...versionOf(slug) };
   });
 }

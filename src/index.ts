@@ -60,6 +60,8 @@ import scriptEnginesRoutes, { startScriptEnginesLoop, warmScriptEngines } from "
 import customerHealthRoutes, { warmCustomerHealthOnBoot } from "./routes/customer-health.js";
 import securityAdvisoriesRoutes from "./routes/security-advisories.js";
 import saasCashRoutes from "./routes/saas-cash.js";
+import aiMessageModelsRoutes from "./routes/ai-message-models.js";
+import { startAiMessageModelsLoop } from "./lib/ai-message-models-io.js";
 import clientFinancialsRoutes from "./routes/client-financials.js";
 import boxHealthRoutes from "./routes/box-health.js";
 import boxChecksRoutes from "./routes/box-checks.js";
@@ -184,6 +186,7 @@ app.use(carriedVerdictsRoutes);
 app.use(customerHealthRoutes);
 app.use(securityAdvisoriesRoutes);
 app.use(saasCashRoutes);
+app.use(aiMessageModelsRoutes);
 app.use(clientFinancialsRoutes);
 
 // 404 handler
@@ -321,6 +324,9 @@ if (process.env.NODE_ENV !== "test" && viewCacheRole() === "refresher") {
         startOutcomeSilverLoop();
         // Monitoring's board of what the Rating picks per Engine, rebuilt every 15 minutes (SCRIPT-VALUE-RATING-1113-MON).
         startScriptEnginesLoop();
+        // MODEL-TAG-EVERY-AI-MESSAGE-1126: the daily series of AI messages with / without their model named, four minutes
+        // in, then hourly (today, yesterday, and a few missing days of the last 30).
+        startAiMessageModelsLoop();
         // Every priced read (lead families' cache key included) reads the fleet medians first.
         warmFleetStatedMediansOnBoot();
         // With the refresher off, projections compute in this process — warm its fleet cell instead.
