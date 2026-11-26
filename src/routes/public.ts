@@ -183,6 +183,7 @@ import type { SalesFunnelKey } from "../lib/sales-funnels.js";
 import { withCampaignNames } from "../lib/sales-path-names.js";
 import { withPipeIdentities } from "../lib/pipe-identities.js";
 import { storedCopyIsFresh } from "../lib/boot-warms.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 const router = Router();
 
@@ -471,7 +472,7 @@ router.get("/public/features", async (_req, res) => {
     res.json({ features: results.map(withChannelType) });
   } catch (error) {
     console.error("[features-service] Public list features error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3359,7 +3360,7 @@ router.get("/public/channels", async (req, res) => {
     await handlePublicChannels(res, includeInline);
   } catch (error) {
     console.error("[features-service] Public channels error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3370,7 +3371,7 @@ router.get("/public/channel-funnel-economics", async (req, res) => {
     await handleChannelFunnelEconomics(req.query.channelSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public channel-funnel economics error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3381,7 +3382,7 @@ router.get("/public/channel-outcome-economics", async (req, res) => {
     await handleChannelOutcomeEconomics(req.query.channelSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public channel-outcome economics error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3392,7 +3393,7 @@ router.get("/public/stats/showcase-outcomes", async (_req, res) => {
     await handleShowcaseOutcomes(res);
   } catch (error) {
     console.error("[features-service] Public showcase outcomes error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3403,7 +3404,7 @@ router.get("/public/stats/showcase-funnels", async (_req, res) => {
     await handleShowcaseFunnels(res);
   } catch (error) {
     console.error("[features-service] Public showcase funnels error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3416,7 +3417,7 @@ router.get("/public/stats/ranked", async (req, res) => {
     await handleRanked(req.query.featureSlug as string | undefined, req.query.objective as string | undefined, req.query.groupBy as string | undefined, limit, res);
   } catch (error) {
     console.error("[features-service] Public stats ranked error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3427,7 +3428,7 @@ router.get("/public/stats/best", async (req, res) => {
     await handleBest(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats best error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3438,7 +3439,7 @@ router.get("/internal/stats/send-forecast", apiKeyOnly, async (req, res) => {
     await handleSendForecast(req.query.days as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Internal stats send-forecast error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3449,7 +3450,7 @@ router.get("/internal/stats/accounts", apiKeyOnly, async (_req, res) => {
     await handleAccounts(res);
   } catch (error) {
     console.error("[features-service] Internal stats accounts error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3463,7 +3464,7 @@ router.get("/internal/stats/active-users", apiKeyOnly, async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Internal stats active-users error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3474,7 +3475,7 @@ router.get("/internal/stats/active-users-by-user", apiKeyOnly, async (_req, res)
     await handleActiveUsersByUser(res);
   } catch (error) {
     console.error("[features-service] Internal stats active-users-by-user error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3488,7 +3489,7 @@ router.get("/internal/stats/revenue", apiKeyOnly, async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Internal stats revenue error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3510,7 +3511,7 @@ function statedAmountFailure(error: unknown, res: import("express").Response): v
     return;
   }
   console.error("[features-service] stated-monthly-amounts error:", error);
-  res.status(500).json({ error: "Internal server error" });
+  answerInternalError(res, error);
 }
 
 router.get("/internal/stated-monthly-amounts", apiKeyOnly, async (req, res) => {
@@ -3618,7 +3619,7 @@ router.get("/public/stats/cost-projection", async (req, res) => {
     await handlePublicCostProjection(req.query.featureSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats cost-projection error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3635,7 +3636,7 @@ router.get("/public/stats/cost-per-outcome-trend", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats cost-per-outcome-trend error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3651,7 +3652,7 @@ router.get("/public/stats/workflow-cost-per-outcome", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats workflow-cost-per-outcome error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -3670,7 +3671,7 @@ router.get("/internal/fleet-leg-maturity", apiKeyOnly, async (req, res) => {
     res.json(await computeFleetLegWorkflowMaturity(featureSlug, legKey, slugs));
   } catch (error) {
     console.error("[features-service] Internal fleet leg maturity error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -4406,7 +4407,7 @@ router.get("/public/stats/best-model-cost-per-outcome-trend", async (req, res) =
     );
   } catch (error) {
     console.error("[features-service] Public stats best-model-cost-per-outcome-trend error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -4417,7 +4418,7 @@ router.get("/public/stats/cost-per-outcome-lifetime", async (req, res) => {
     await handleCostPerOutcomeLifetime(req.query.featureSlug as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public stats cost-per-outcome-lifetime error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -4433,7 +4434,7 @@ router.get("/public/stats/cost-per-outcome-distribution", async (req, res) => {
     );
   } catch (error) {
     console.error("[features-service] Public stats cost-per-outcome-distribution error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -4444,7 +4445,7 @@ router.get("/public/stats/workflow-engagement-latency", async (req, res) => {
     await handlePublicWorkflowEngagementLatency(req.query.featureSlug as string | undefined, req.query.groupBy as string | undefined, res);
   } catch (error) {
     console.error("[features-service] Public workflow engagement latency error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 

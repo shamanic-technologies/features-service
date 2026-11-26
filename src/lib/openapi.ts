@@ -8234,7 +8234,7 @@ const catalogueRunnableField = { runnable: z.boolean().describe("We run it today
 const catalogueErrors = {
   400: { description: "A filter is invalid (`reason`: `limit_unrecognised`, `step_not_found`, `sales_path_not_found`, `pipe_required`, ...)." },
   401: { description: "Missing or wrong service key." },
-  503: { description: "`catalogue_economics_not_computed_yet` (first read after a deploy) or `workflow_ranking_not_computed_yet`." },
+  503: { description: "`catalogue_economics_not_computed_yet` (first read after a deploy), `workflow_ranking_not_computed_yet`, or `view_refresher_restarting` (a figure the read needs is computed by the view refresher, which is restarting: `Retry-After: 60`, read again in a minute; `view` names the figure). A per-offer read prices on the brand's stated rates instead of answering this when only the brand's measured rates wait on it (`ownRatesUnavailableReason`)." },
 };
 
 const catalogueLifecycleRungs = ["lead_found", "contacted", "engaged", "signup_or_form", "meeting_booked", "meeting_attended", "paid_client"] as const;
@@ -8415,7 +8415,7 @@ const catalogueOfferQuery = {
   target: z.string().describe("Per-offer reads only (GS-STEP11-NO-CAMPAIGN-1122): the step key of the TARGET of the campaign these funnels are proposed for (`meeting_booked` for the signup's campaign). The offer's business must then have only the steps a funnel or path walks BEFORE the Target: the Target is what the campaign makes, the steps after it are the client's own sales, never a precondition; a funnel that never reaches the Target is checked on every step. Echoed as `offerSteps.checkedBefore`. Unknown step = 400 `target_unknown`. Absent = every step checked.").optional(),
 };
 const catalogueOfferEcho = z
-  .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate."), ownRatesUnavailableReason: z.enum(["measured_rates_still_computing"]).nullable().describe("Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read.") })
+  .object({ offerId: z.string(), brandId: z.string(), lifetimeRevenueUsd: z.number().nullable(), lifetimeRevenueSource: z.enum(["offer_stated", "fleet_median"]).nullable(), ownRateLegs: z.number().int().describe("Legs priced on the brand's own rate."), ownRatesUnavailableReason: z.enum(["measured_rates_still_computing"]).nullable().describe("Set when the brand's measured rates (a walk of its leads) were not ready within the read's 4 s budget, or the view refresher computing them was restarting: the legs are priced on the rates the brand STATED, the fleet's and the defaults. Read again in a minute for its measured rates. Null = every own rate was read.") })
   .describe("Present on a per-offer read only.")
   .optional();
 const catalogueStepRef = z.object({ id: z.string().describe("Step key."), name: z.string() });

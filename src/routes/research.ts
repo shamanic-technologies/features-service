@@ -97,6 +97,7 @@ import { STUDIED_PIPES } from "../lib/research/assemble.js";
 import { loadChannelCatalogue } from "../lib/channel-declarations-store.js";
 import { listLegAssignments } from "../lib/workflow-leg-assignments.js";
 import { internalPipeToStep } from "../lib/pipe-kind.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 /** The lead state the positive reply pipes produce (LEAD-STATES-1024): the every-path ledger figures key on it. */
 const INTERESTED = "lead_interested";
@@ -1469,7 +1470,7 @@ router.get("/internal/research/conclusions", apiKeyOnly, async (req, res) => {
     res.json(build.conclusions);
   } catch (error) {
     console.error("[features-service] research conclusions failed:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -1482,7 +1483,7 @@ router.get("/internal/research/studies", apiKeyOnly, async (req, res) => {
     res.json(build.measuredStudies);
   } catch (error) {
     console.error("[features-service] research studies failed:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -1493,7 +1494,7 @@ router.get("/internal/research/templates", apiKeyOnly, async (_req, res) => {
     res.json(build.texts);
   } catch (error) {
     console.error("[features-service] research template texts read failed:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 

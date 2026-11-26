@@ -7,6 +7,7 @@ import { extractBrandFields, BrandFieldExtractionError } from "../lib/brand-clie
 import { flattenValue } from "../lib/flatten.js";
 import { traceEvent } from "../lib/trace-event.js";
 import { withChannelType } from "../lib/channel-types.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 const router = Router();
 
@@ -23,7 +24,7 @@ router.get("/features", apiKeyAuth, async (req, res) => {
     res.json({ features: results.map(withChannelType) });
   } catch (error) {
     console.error("[features-service] List features error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -44,7 +45,7 @@ router.get("/features/:slug", apiKeyAuth, async (req, res) => {
     res.json({ feature: withChannelType(feature) });
   } catch (error) {
     console.error("[features-service] Get feature error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -69,7 +70,7 @@ router.get("/features/:featureSlug/inputs", apiKeyAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("[features-service] Get feature inputs error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
@@ -209,7 +210,7 @@ router.post("/features/:featureSlug/prefill", apiKeyAuth, async (req, res) => {
     if (error instanceof Error && error.message.includes("brand-service")) {
       return res.status(502).json({ error: error.message });
     }
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 

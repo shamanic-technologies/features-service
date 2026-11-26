@@ -328,6 +328,46 @@ const DEFAULT_REFRESHER_PORT = 8091;
 const RESPAWN_DELAY_MS = 5_000;
 
 /**
+ * The refresher's OWN heap ceiling, in MB (REFRESHER-DOWN-NAMED-1126). It used to inherit the serving process's
+ * `NODE_OPTIONS=--max-old-space-size=768`, while it alone runs every heavy view compute: prod 2026-11-25/26 it died
+ * out of memory 7 times in 6 h (live set 750-760 MB at each death, after 7 min to 3 h up), and every read needing a
+ * view it had not stored meanwhile was refused. The box has ~10 GB free; the serving process keeps its own ceiling.
+ * Env `VIEW_REFRESHER_MAX_OLD_SPACE_MB`, default 1536.
+ */
+export function refresherHeapMb(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.VIEW_REFRESHER_MAX_OLD_SPACE_MB);
+  return Number.isInteger(n) && n >= 256 ? n : 1536;
+}
+
+/** The serving process's NODE_OPTIONS without its heap ceiling (the refresher states its own on the command line). */
+export function refresherNodeOptions(nodeOptions: string | undefined): string {
+  return (nodeOptions ?? "").split(/\s+/).filter((o) => o !== "" && !o.startsWith("--max-old-space-size")).join(" ");
+}
+
+/** One refresher exit the supervisor saw (crash = a signal or a non-zero code: out of memory is SIGABRT). */
+export interface RefresherExit {
+  at: number;
+  code: number | null;
+  signal: string | null;
+  upMs: number;
+}
+const RECENT_EXITS_MAX = 200;
+const recentExits: RefresherExit[] = [];
+
+/** The refresher exits seen since boot (newest last, at most 200). */
+export function refresherExitsNow(): RefresherExit[] {
+  return [...recentExits];
+}
+
+export function __noteRefresherExitForTest(exit: RefresherExit): void {
+  recentExits.push(exit);
+}
+
+export function __resetRefresherExitsForTest(): void {
+  recentExits.length = 0;
+}
+
+/**
  * Fork the refresher (the same entrypoint, `VIEW_CACHE_ROLE=refresher`) and point this process at it.
  * Respawned on exit. `VIEW_REFRESHER_ENABLED=false` keeps every compute in-process (the kill switch).
  */
@@ -336,18 +376,22 @@ export function startViewRefresher(entrypoint: string): void {
   const port = Number(process.env.VIEW_REFRESHER_PORT_OVERRIDE ?? DEFAULT_REFRESHER_PORT);
   supervising = true;
   const spawn = () => {
+    const startedAt = Date.now();
     const child: ChildProcess = fork(entrypoint, [], {
-      env: { ...process.env, VIEW_CACHE_ROLE: "refresher", PORT: String(port), VIEW_REFRESHER_PORT: "" },
+      env: { ...process.env, NODE_OPTIONS: refresherNodeOptions(process.env.NODE_OPTIONS), VIEW_CACHE_ROLE: "refresher", PORT: String(port), VIEW_REFRESHER_PORT: "" },
+      execArgv: [...process.execArgv.filter((a) => !a.startsWith("--max-old-space-size")), `--max-old-space-size=${refresherHeapMb()}`],
       stdio: "inherit",
     });
     child.on("message", (message) => {
       if (message === "view-refresher-ready") {
         process.env.VIEW_REFRESHER_PORT = String(port);
-        console.log(`[features-service] view refresher ready on port ${port} (pid ${child.pid})`);
+        console.log(`[features-service] view refresher ready on port ${port} (pid ${child.pid}, heap ceiling ${refresherHeapMb()} MB)`);
       }
     });
     child.on("exit", (code, signal) => {
       delete process.env.VIEW_REFRESHER_PORT;
+      recentExits.push({ at: Date.now(), code, signal, upMs: Date.now() - startedAt });
+      if (recentExits.length > RECENT_EXITS_MAX) recentExits.shift();
       console.error(`[features-service] view refresher exited (code ${code}, signal ${signal}); computing in-process, respawning in ${RESPAWN_DELAY_MS}ms`);
       setTimeout(spawn, RESPAWN_DELAY_MS).unref();
     });

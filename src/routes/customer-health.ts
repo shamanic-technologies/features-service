@@ -25,6 +25,7 @@ import { storedCopyIsFresh } from "../lib/boot-warms.js";
 import { listDeclaredChannels } from "../lib/channel-declarations-store.js";
 import { refresherBaseUrl } from "../lib/view-refresher.js";
 import { routeResponseShapeFingerprint } from "../lib/response-shape.js";
+import { answerInternalError } from "../lib/internal-error.js";
 
 const ROUTE = "/internal/stats/customer-health";
 /** A build younger than this is served without asking for a new one. */
@@ -232,7 +233,7 @@ router.get(ROUTE, apiKeyOnly, async (_req, res) => {
     res.type("application/json").send(text);
   } catch (error) {
     console.error("[features-service] Internal stats customer-health error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    answerInternalError(res, error);
   }
 });
 
